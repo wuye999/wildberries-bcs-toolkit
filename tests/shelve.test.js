@@ -841,3 +841,52 @@ test('跨店补上架写前查重：已存在不提交、查重失败不提交�
   assert.ok(description.startsWith('Новый ')); assert.equal(description.length, 2000);
   assert.equal(JSON.parse(posts[0].shop)[0].warehouseQuantity, 0);
 });
+
+test('跨店同步面板：取消同步不写入、仅勾选补上架也会查询并保留手填配置、切换字段即时重算差异', () => {
+  const c = context(['src/30-config.js', 'src-sync/20-sync-diff.js', 'src-sync/32-ui-panel.js'], {
+    SYNC_PREFIX: 'bcs-sync-',
+  });
+  const srcCard = { nmID: 1001, vendorCode: 'BCS-QAAA-1001', title: '新标题', description: '同描述',
+    brand: '', characteristics: [], dimensions: { length: 10, width: 10, height: 5, weightBrutto: 0.5 },
+    photos: [{ big: 'https://example.invalid/1.webp' }] };
+  const tgtCard = { ...srcCard, nmID: 2001, title: '旧标题' };
+  const shopB = { id: 2, shopName: 'B店', apiKey: 'k2' };
+  const shopC = { id: 3, shopName: 'C店', apiKey: 'k3' };
+  const plan = [{
+    item: { nmId: '1001', vendorCode: 'BCS-QAAA-1001', title: '新标题' },
+    source: srcCard,
+    targets: [
+      { shop: shopB, status: 'listed', nmId: 2001, _card: tgtCard, _photoInfo: { same: true, changed: [], countDiff: false },
+        diff: c.diffCards(srcCard, tgtCard, ['title', 'description', 'photos'], { same: true, changed: [], countDiff: false }) },
+      { shop: shopC, status: 'absent', nmId: null, diff: [], risk: [] },
+    ],
+  }];
+  c.plan = plan;
+  c.evaluate(`
+    syncState.sourceId = 1;
+    syncState.targetIds = new Set([2]);
+    syncState.shelveShops = new Set([3]);
+    syncState.defaultPrice = '88';
+    syncState.plan = plan;
+    syncState.shelveEdits.set('BCS-QAAA-1001|3', { vc: 'BCS-QAAA-1001-C', price: '99.5', qty: '0' });
+  `);
+
+  assert.deepEqual([...c.activeTargetShopIds()].sort((a, b) => a - b), [2, 3]);
+  assert.equal(c.collectJobs(plan).length, 1);
+
+  // 取消勾选 B 店「同步修改」后，即使未重新比对，也不得再收集 B 店写入任务
+  c.evaluate('syncState.targetIds.delete(2)');
+  assert.equal(c.collectJobs(plan).length, 0);
+
+  // 重新勾选 B 店，但取消「标题」字段后即时重算差异，B 店变为无差异
+  c.evaluate('syncState.targetIds.add(2); syncState.fields.title = false;');
+  c.recomputePlanDiffs();
+  assert.equal(c.collectJobs(plan).length, 0);
+
+  // C 店仅勾选「缺品补上」，收集到保留的自定义货号、价格与库存 0
+  const shelveJobs = c.collectShelveJobs(plan);
+  assert.equal(shelveJobs.length, 1);
+  assert.deepEqual(clone(shelveJobs[0].cfg), {
+    vendorCode: 'BCS-QAAA-1001-C', price: '99.5', quantity: 0, warehouseId: 0,
+  });
+});

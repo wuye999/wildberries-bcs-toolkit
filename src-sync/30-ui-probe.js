@@ -14,9 +14,10 @@
         _toastEl.style.cssText = [
           'position:fixed', 'left:50%', 'top:24px', 'transform:translateX(-50%)',
           'z-index:2147483000', 'max-width:min(760px,92vw)',
-          'padding:10px 16px', 'border-radius:8px',
-          'background:rgba(28,32,38,.96)', 'color:#fff', 'font-size:13px', 'line-height:1.5',
-          'box-shadow:0 6px 24px rgba(0,0,0,.35)', 'border:1px solid rgba(255,255,255,.14)',
+          'padding:10px 18px', 'border-radius:10px',
+          'background:#1f2937', 'color:#fff', 'font-size:13px', 'line-height:1.5',
+          'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif',
+          'box-shadow:0 10px 30px rgba(15,23,42,.24)', 'border:1px solid rgba(255,255,255,.1)',
           'pointer-events:none', 'opacity:0', 'transition:opacity .18s',
         ].join(';');
         document.body.appendChild(_toastEl);
@@ -28,36 +29,61 @@
     } catch (e) { /* ignore */ }
   }
 
+  function probeEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
   function injectProbeStyles() {
     if (document.getElementById(SYNC_PREFIX + 'style')) return;
     const st = document.createElement('style');
     st.id = SYNC_PREFIX + 'style';
     st.textContent = `
-#${PANEL_ID}{position:fixed;top:64px;right:16px;width:660px;max-width:94vw;z-index:2147482000;
-  background:#1c2026;color:#e6e9ee;border:1px solid rgba(255,255,255,.14);border-radius:10px;
-  box-shadow:0 10px 34px rgba(0,0,0,.45);font:13px/1.55 -apple-system,"Segoe UI",system-ui,sans-serif;}
-#${PANEL_ID} .hd{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.1);}
-#${PANEL_ID} .hd b{font-size:14px;}
-#${PANEL_ID} .hd .ver{font-size:11px;color:#8b93a1;}
-#${PANEL_ID} .hd .x{margin-left:auto;cursor:pointer;color:#98a1ae;font-size:18px;line-height:1;padding:0 4px;}
-#${PANEL_ID} .bd{padding:10px 12px;max-height:62vh;overflow:auto;}
-#${PANEL_ID} .cred{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.07);}
+#${PANEL_ID},#${PANEL_ID} *{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif;}
+#${PANEL_ID}{position:fixed;inset:0;z-index:2147482300;display:flex;align-items:center;justify-content:center;padding:20px;
+  background:rgba(15,23,42,.38);backdrop-filter:blur(2px);font-size:13px;line-height:1.5;color:#111827;}
+#${PANEL_ID} .dlg{width:min(760px,95vw);max-height:88vh;display:flex;flex-direction:column;background:#fff;
+  border-radius:14px;border:1px solid #e5e7eb;box-shadow:0 24px 60px rgba(15,23,42,.22);overflow:hidden;}
+#${PANEL_ID} .hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #eef0f4;background:#fff;}
+#${PANEL_ID} .hd .ttl{font-size:16px;font-weight:700;color:#111827;}
+#${PANEL_ID} .hd .sub{font-size:12px;color:#6b7280;background:#f3f4f6;padding:2px 8px;border-radius:999px;}
+#${PANEL_ID} .hd .hd-act{margin-left:auto;display:flex;align-items:center;gap:8px;}
+#${PANEL_ID} .hd .x{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;
+  border:none;background:transparent;border-radius:8px;cursor:pointer;color:#6b7280;font-size:20px;line-height:1;}
+#${PANEL_ID} .hd .x:hover{background:#f3f4f6;color:#111827;}
+#${PANEL_ID} .bd{padding:16px 18px;overflow:auto;flex:1;background:#f7f8fb;}
+#${PANEL_ID} .summary{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
+  padding:10px 14px;margin-bottom:12px;border-radius:10px;background:#fff;border:1px solid #e5e7eb;font-size:12px;color:#4b5563;}
+#${PANEL_ID} .summary .stat{display:flex;align-items:center;gap:8px;font-weight:600;color:#111827;}
+#${PANEL_ID} .card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;}
 #${PANEL_ID} table{width:100%;border-collapse:collapse;font-size:12px;}
-#${PANEL_ID} th,#${PANEL_ID} td{padding:5px 6px;text-align:left;border-bottom:1px solid rgba(255,255,255,.07);white-space:nowrap;}
-#${PANEL_ID} th{color:#8b93a1;font-weight:600;}
-#${PANEL_ID} td.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#9aa4b2;}
-#${PANEL_ID} .ok{color:#3ddc97;}
-#${PANEL_ID} .bad{color:#ff6b6b;}
-#${PANEL_ID} .warn{color:#ffc44d;}
-#${PANEL_ID} .ft{display:flex;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid rgba(255,255,255,.1);}
-#${PANEL_ID} button{cursor:pointer;border-radius:6px;border:1px solid rgba(255,255,255,.18);
-  background:#2a3038;color:#e6e9ee;padding:6px 12px;font-size:12px;}
-#${PANEL_ID} button.primary{background:#2f6fed;border-color:#2f6fed;}
-#${PANEL_ID} button:disabled{opacity:.55;cursor:not-allowed;}
-#${PANEL_ID} .status{margin-left:auto;color:#9aa4b2;font-size:12px;}
-#${PANEL_ID} .hint{margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(255,196,77,.08);
-  border:1px solid rgba(255,196,77,.28);color:#ffd98a;font-size:12px;line-height:1.6;}
-#${PANEL_ID} .tip{color:#8b93a1;font-size:11px;margin-top:6px;line-height:1.6;}
+#${PANEL_ID} th,#${PANEL_ID} td{padding:8px 12px;text-align:left;border-bottom:1px solid #f1f3f7;vertical-align:middle;}
+#${PANEL_ID} th{background:#fafbfc;color:#6b7280;font-weight:600;white-space:nowrap;font-size:12px;}
+#${PANEL_ID} tr:last-child td{border-bottom:none;}
+#${PANEL_ID} .shop-nm{font-weight:600;color:#111827;}
+#${PANEL_ID} .shop-id{font-size:11px;color:#9ca3af;font-family:ui-monospace,Consolas,monospace;}
+#${PANEL_ID} .mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#4b5563;font-variant-numeric:tabular-nums;}
+#${PANEL_ID} .pill{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;}
+#${PANEL_ID} .pill.ok{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;}
+#${PANEL_ID} .pill.bad{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;}
+#${PANEL_ID} .pill.warn{background:#fffbeb;color:#b45309;border:1px solid #fde68a;}
+#${PANEL_ID} .pill.mute{background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb;}
+#${PANEL_ID} .acc-sub{font-size:11px;color:#6b7280;margin-top:2px;max-width:190px;white-space:normal;line-height:1.35;}
+#${PANEL_ID} .err-row td{padding:0 12px 10px 12px;background:#fff8f8;color:#b91c1c;font-size:11px;white-space:normal;}
+#${PANEL_ID} .hint{margin-top:12px;padding:12px 14px;border-radius:10px;background:#fffbeb;
+  border:1px solid #fde68a;color:#92400e;font-size:12px;line-height:1.7;}
+#${PANEL_ID} .hint b{color:#78350f;}
+#${PANEL_ID} .empty{text-align:center;padding:38px 20px;background:#fff;border:1px dashed #d1d5db;border-radius:10px;color:#6b7280;}
+#${PANEL_ID} .empty strong{display:block;color:#111827;font-size:14px;margin-bottom:4px;}
+#${PANEL_ID} .tip{color:#6b7280;font-size:11px;margin-top:10px;line-height:1.6;}
+#${PANEL_ID} .ft{display:flex;gap:8px;align-items:center;padding:12px 18px;border-top:1px solid #eef0f4;background:#fff;}
+#${PANEL_ID} button.btn{cursor:pointer;border-radius:8px;border:1px solid #d1d5db;background:#fff;color:#374151;
+  padding:7px 14px;font-size:13px;font-weight:500;transition:background .15s,border-color .15s;}
+#${PANEL_ID} button.btn:hover{background:#f3f4f6;border-color:#9ca3af;}
+#${PANEL_ID} button.btn.sm{padding:5px 10px;font-size:12px;}
+#${PANEL_ID} button.btn.primary{background:#5b47e0;border-color:#5b47e0;color:#fff;font-weight:600;}
+#${PANEL_ID} button.btn.primary:hover{background:#4c38cc;border-color:#4c38cc;}
+#${PANEL_ID} button.btn:disabled{opacity:.5;cursor:not-allowed;}
+#${PANEL_ID} .status{margin-left:auto;color:#6b7280;font-size:12px;}
 `;
     (document.head || document.documentElement).appendChild(st);
   }
@@ -66,45 +92,67 @@
     const bodyEl = document.getElementById(PANEL_ID + '-bd');
     if (!bodyEl) return;
     if (!result || !result.rows || !result.rows.length) {
-      bodyEl.innerHTML = '<div class="tip">还没有检测数据，点右下「开始检测」。</div>';
+      bodyEl.innerHTML = `<div class="empty">
+        <strong>还没有检测记录</strong>
+        请确保已在 BCS 登录，然后点击下方「开始检测」验证各店铺的 WB 密钥与同步权限。
+      </div>`;
       return;
     }
-    const yn = (v) => v === true ? '<span class="ok">✓</span>'
-      : v === false ? '<span class="bad">✗</span>' : '<span class="warn">–</span>';
+
+    const ynPill = (v, okText, badText) => v === true
+      ? `<span class="pill ok">${okText}</span>`
+      : v === false
+        ? `<span class="pill bad">${badText}</span>`
+        : '<span class="pill mute">未检测</span>';
+
     const rows = result.rows.map((r) => {
-      const expTxt = r.daysLeft == null ? '—'
-        : (r.daysLeft < 0 ? `<span class="bad">已过期</span>`
-          : `<span class="${r.daysLeft < 30 ? 'warn' : 'ok'}">${r.daysLeft} 天</span>`);
-      const acc = r.acc == null ? '—' : `${r.acc} <span class="mono">(${r.accText})</span>`;
-      const errTip = [r.pingErr, r.contentErr].filter(Boolean).join(' / ');
+      const expTxt = r.daysLeft == null ? '<span class="pill mute">—</span>'
+        : (r.daysLeft < 0 ? '<span class="pill bad">已过期</span>'
+          : `<span class="pill ${r.daysLeft < 30 ? 'warn' : 'ok'}">剩 ${r.daysLeft} 天</span>`);
+      const keyCell = r.hasKey
+        ? `<span class="mono">···${probeEsc(r.keyTail)}</span>`
+        : '<span class="pill bad">未配置</span>';
+      const accSub = r.accText ? `<div class="acc-sub">${probeEsc(r.accText)}</div>` : '';
+      const errTip = [r.pingErr, r.contentErr].filter(Boolean).join('；');
       return `<tr>
-        <td>${r.shopId}<br><span class="mono">${r.shopName || ''}</span></td>
-        <td class="mono">${r.hasKey ? '…' + r.keyTail : '<span class="bad">无</span>'}</td>
+        <td>
+          <div class="shop-nm">${probeEsc(r.shopName || '未命名店铺')}</div>
+          <div class="shop-id">#${probeEsc(r.shopId)}</div>
+        </td>
+        <td>${keyCell}</td>
         <td>${expTxt}</td>
-        <td>${acc}</td>
-        <td>${yn(r.ping)}</td>
-        <td>${yn(r.content)}</td>
+        <td>${ynPill(r.ping, '正常', '失败')}</td>
+        <td>${ynPill(r.content, '可用', '不可用')}${accSub}</td>
         <td class="mono">${r.cardTotal == null ? '—' : r.cardTotal}</td>
-      </tr>${errTip ? `<tr><td colspan="7" class="bad" style="padding-top:0">${errTip}</td></tr>` : ''}`;
+      </tr>${errTip ? `<tr class="err-row"><td colspan="6">⚠ ${probeEsc(errTip)}</td></tr>` : ''}`;
     }).join('');
 
     const okCount = result.rows.filter((r) => r.content === true).length;
     const total = result.rows.length;
     const allOk = okCount === total;
     const hint = allOk ? '' : `<div class="hint">
-      ${total - okCount} 个店铺 Content 不可用。常见原因与处置：<br>
-      · <b>token 已被撤销</b>：WB 后台重新生成过密钥 → 更新 BCS 店铺里的 apiKey<br>
-      · <b>缺少「内容」类别</b>：WB 后台 Settings → API → 新建 token 时勾选「内容」（类别创建后不可改，必须新建）<br>
-      · <b>BCS 未返回 apiKey</b>：请登录 BCS 网站并更新该店的 WB API 密钥
+      <b>有 ${total - okCount} 家店铺暂不可同步，常见处理方法：</b><br>
+      1. <b>密钥已被撤销</b>：在 WB 卖家后台重新生成过 API 密钥 → 到 BCS 店铺设置里更新对应密钥。<br>
+      2. <b>缺少「内容」权限</b>：WB 后台「设置 → API」新建密钥时，必须勾选「内容 (Content)」权限。<br>
+      3. <b>未配置密钥</b>：点右上角「打开 BCS 登录页」，在 BCS 店铺管理中补录 WB API 密钥。
     </div>`;
 
     bodyEl.innerHTML = `
-      <table>
-        <thead><tr><th>店铺</th><th>apiKey</th><th>有效期</th><th>acc(类别)</th><th>ping</th><th>Content</th><th>卡片数</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="summary">
+        <div class="stat">
+          <span class="pill ${allOk ? 'ok' : 'warn'}">${allOk ? '全部可用' : `${okCount}/${total} 店可用`}</span>
+          <span>共检测 ${total} 家店铺</span>
+        </div>
+        <span>检测时间：${new Date(result.timestamp).toLocaleString()}</span>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>店铺</th><th>API 密钥</th><th>有效期</th><th>接口连通</th><th>商品同步权限</th><th>商品数</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
       ${hint}
-      <div class="tip">判定以真实接口返回为准（ping=common-api，Content=content/v2/get/cards/list limit=1）。acc 位掩码仅作参考。检测时间：${new Date(result.timestamp).toLocaleString()}</div>
+      <div class="tip">说明：结果以 WB 官方接口实时返回为准，仅做只读检测，不会改动任何商品数据。</div>
     `;
   }
 
@@ -123,7 +171,7 @@
       const result = await probeAllShops((msg) => setProbeStatus(msg));
       renderProbeTable(result);
       const ok = result.rows.filter((r) => r.content === true).length;
-      setProbeStatus(`完成：${ok}/${result.rows.length} 店 Content 可用`);
+      setProbeStatus(`检测完成：${ok}/${result.rows.length} 家店铺可用`);
       showToast(`权限自检完成：${ok}/${result.rows.length} 店可用`, 3500);
     } catch (e) {
       log.error('权限自检失败:', e && e.message);
@@ -141,24 +189,32 @@
     const div = document.createElement('div');
     div.id = PANEL_ID;
     div.innerHTML = `
-      <div class="hd">
-        <b>跨店同步 · 店铺权限自检</b>
-        <span class="ver">v${SYNC_VERSION} · 只读</span>
-        <span class="x" title="关闭">×</span>
-      </div>
-      <div class="cred">
-        <button type="button" id="${PANEL_ID}-login">打开 BCS 登录页</button>
-        <span class="tip">登录后，点「开始检测」验证店铺权限。</span>
-      </div>
-      <div class="bd" id="${PANEL_ID}-bd"></div>
-      <div class="ft">
-        <button class="primary" id="${PANEL_ID}-run">开始检测</button>
-        <button id="${PANEL_ID}-clear">清空缓存</button>
-        <span class="status" id="${PANEL_ID}-status"></span>
+      <div class="dlg" role="dialog" aria-label="店铺权限自检">
+        <div class="hd">
+          <span class="ttl">店铺权限自检</span>
+          <span class="sub">v${probeEsc(SYNC_VERSION)} · 只读检测</span>
+          <div class="hd-act">
+            <button type="button" class="btn sm" id="${PANEL_ID}-login">打开 BCS 登录页</button>
+            <button type="button" class="x" title="关闭">×</button>
+          </div>
+        </div>
+        <div class="bd" id="${PANEL_ID}-bd"></div>
+        <div class="ft">
+          <button type="button" class="btn primary" id="${PANEL_ID}-run">开始检测</button>
+          <button type="button" class="btn" id="${PANEL_ID}-clear">清空记录</button>
+          <span class="status" id="${PANEL_ID}-status"></span>
+        </div>
       </div>
     `;
     document.body.appendChild(div);
-    div.querySelector('.x').addEventListener('click', () => div.remove());
+    const close = () => {
+      document.removeEventListener('keydown', onEsc);
+      div.remove();
+    };
+    const onEsc = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onEsc);
+    div.addEventListener('click', (e) => { if (e.target === div) close(); });
+    div.querySelector('.x').addEventListener('click', close);
     div.querySelector('#' + PANEL_ID + '-login').addEventListener('click', openBcsLogin);
     div.querySelector('#' + PANEL_ID + '-run').addEventListener('click', runProbe);
     div.querySelector('#' + PANEL_ID + '-clear').addEventListener('click', () => {
