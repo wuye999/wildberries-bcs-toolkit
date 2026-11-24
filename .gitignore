@@ -1,0 +1,30 @@
+# 本地数据、旧版本、页面样本与工作记录
+/.local/
+/.trae/
+/.workbuddy/
+/TEMP/
+/Wildberries*助手V*/
+
+# 构建产物与开发缓存
+/dist/
+/node_modules/
+__pycache__/
+*.py[cod]
+/.venv/
+
+# 凭据、扩展打包文件、表格和备份
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crx
+*.har
+*.xlsx
+*.xls
+*.xlsm
+*.bak
+*.bak-*
+Thumbs.db
+.DS_Store
