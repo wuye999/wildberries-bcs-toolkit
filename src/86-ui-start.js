@@ -21,6 +21,7 @@
 
   async function doStartBatch() {
     const config = JSON.parse(JSON.stringify(userConfig));
+    const pricesAtStart = BOSS_DEFAULTS;
     const directUpload = config.settings.directUpload;
     const action = directUpload ? '上架' : '存入采集箱';
     const items = JSON.parse(JSON.stringify(pendingList));
@@ -89,6 +90,7 @@
     showToast(`正在检查 ${selectedShops.length} 个店铺中是否存在重复上架...`, 8000);
     const { dupes, skipped } = await checkDuplicatedItems(validItems, selectedShops);
     if (skipped.length) throw new Error('部分商品未完成查重，本批未提交');
+    if (BOSS_DEFAULTS !== pricesAtStart) throw new Error('准备期间价格表已更新，请重新开始上架');
     const skipByNm = new Map();   // nmId -> Set(shopId)
     if (dupes.length) {
       dupes.forEach(d => {
@@ -162,7 +164,7 @@
              `规格名为占位、无实时现价，售价/尺寸/重量按价格表 + 店铺倍数提交），请核对：\n${synList}` +
              (syntheticItems.length > 20 ? `\n  ...（其余 ${syntheticItems.length - 20} 个略）` : '') + '\n';
     }
-    msg += `\n${action}过程中请勿关闭页面或操作 BCS 插件。`;
+    msg += `\n${action}完成前请保持此页面打开。`;
     if (!confirm(msg)) return;
 
     const btn = document.getElementById('bcs-btn-start');

@@ -81,59 +81,6 @@
   }
 
   // ============================================================
-  // ★ v1.8.0 卖家后台「所有商品」页（seller.wildberries.ru/card-main/*）
-  // ============================================================
-  // React + CSS Modules + dnd-kit 表格；class 哈希随构建变化不可依赖，全部用 data-testid/id。
-  // 行内自带勾选框（td[data-testid$="_selection"] input[type=checkbox]），直接复用、不注入。
-  // 行索引（row-N）会因排序/筛选/翻页重排，业务键一律用行内提取的 nmId。
-  function isSellerGoodsPage() {
-    return IS_SELLER_HOST && /^\/card-main\//.test(location.pathname || '');
-  }
-
-  // 提取当前勾选行的商品（点击「添加选中商品」时实时读取，虚拟滚动下天然安全）
-  // nmId 主路径 = 图片 URL /vol{vol}/part{part}/{nmId}/（纯数字无本地化文案依赖）；
-  // card-nmID-text 文本（"WB 商品编码: NNNN"）交叉校验，不一致以图片 URL 为准并告警。
-  function getSellerSelectedItems() {
-    const items = [];
-    document.querySelectorAll('tr[data-testid^="all-goods-table-row-"]').forEach(tr => {
-      const cb = tr.querySelector('td[data-testid$="_selection"] input[type=checkbox]');
-      if (!cb || !cb.checked) return;
-
-      const img = tr.querySelector('img[data-testid^="main-table-info-cell-image-"]');
-      const src = img ? (img.getAttribute('src') || '') : '';
-      const mImg = src.match(/\/vol\d+\/part\d+\/(\d+)\//);
-      let nmId = mImg ? mImg[1] : '';
-      const nmTxtEl = tr.querySelector('[data-testid^="card-nmID-text"]');
-      const mTxt = nmTxtEl ? String(nmTxtEl.textContent || '').match(/(\d{5,})/) : null;
-      if (nmId && mTxt && mTxt[1] !== nmId) {
-        log.warn(`卖家页行 nmId 不一致：图片URL=${nmId}，文本=${mTxt[1]}（以图片URL为准）`);
-      } else if (!nmId && mTxt) {
-        nmId = mTxt[1];
-      }
-      if (!nmId) return;   // 两种路径都取不到 → 行结构异常，跳过并留痕
-
-      const titleEl = tr.querySelector('[data-testid="card-title-text"]');
-      const subjEl = tr.querySelector('[data-testid="card-subcategory-text"]');
-      const vcEl = tr.querySelector('[data-testid^="card-vendorCode-text"]');
-      // ★ v1.8.1 直接使用行内卖家编码原文（特例格式可能带后缀如 BCS-XXXX-123456-20，不截断不改写）
-      let vcRaw = vcEl ? String(vcEl.textContent || '') : '';
-      vcRaw = vcRaw.replace(/^[\s\S]*?[:：]\s*/, '').trim();  // 去掉"卖家商品编码:"标签前缀（中/英文冒号兼容；无冒号保留原文）
-
-      items.push({
-        nmId,
-        title: titleEl ? titleEl.textContent.trim() : '',
-        // www 详情页地址（面板展示/跳转用；seller 行内无商品链接）
-        url: buildWbProductUrl(nmId),
-        thumb: src,
-        vendorCode: vcRaw,   // 行内卖家编码原文预填（applyDetailToItem 不覆盖已有值；切前缀码不重建带后缀值）
-        subjectName: subjEl ? subjEl.textContent.trim() : '',
-        el: tr,   // 供添加成功后取消原生勾选
-      });
-    });
-    return items;
-  }
-
-  // ============================================================
   // 8. 莫斯科仓库匹配（支持中文"莫斯科"和俄文"Москва"）
   // ============================================================
   function findMoscowWarehouse(warehouses) {

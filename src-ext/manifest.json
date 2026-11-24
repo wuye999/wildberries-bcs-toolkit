@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Wildberries BCS Toolkit",
+  "version": "1.11.0",
+  "description": "Wildberries 批量急速上架与跨店同步",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": [
+    "https://*.bcserp.com/*",
+    "https://www.wildberries.ru/*",
+    "https://wildberries.ru/*",
+    "https://seller.wildberries.ru/*",
+    "https://*.wbbasket.ru/*",
+    "https://content-api.wildberries.ru/*",
+    "https://common-api.wildberries.ru/*",
+    "https://seller-content.wildberries.ru/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.wildberries.ru/*", "https://wildberries.ru/*"],
+      "js": ["xlsx.mini.min.js", "shelve.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://seller.wildberries.ru/*"],
+      "js": ["sync.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

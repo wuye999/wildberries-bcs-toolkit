@@ -92,8 +92,7 @@
       shops = await ensureShops();
     } catch (e) {
       showToast('获取店铺列表失败：' + e.message, 7000);
-      // 凭证类错误 → 直接把「店铺自检/凭证」面板弹出来，省得用户找入口
-      if (/凭证|认证|401/.test(e.message || '')) injectProbePanel();
+      if (isCardMainPage() && e.message.includes(BCS_LOGIN_URL)) injectProbePanel();
       return;
     }
     syncState.shops = shops;
@@ -110,6 +109,7 @@
       }
     }
 
+    if (!isCardMainPage()) return;
     syncState.targetIds = new Set(shops.filter(s => s.id !== syncState.sourceId).map(s => s.id));
 
     let div = document.getElementById(PANEL_SYNC);

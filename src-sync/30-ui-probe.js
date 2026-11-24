@@ -42,10 +42,6 @@
 #${PANEL_ID} .hd .x{margin-left:auto;cursor:pointer;color:#98a1ae;font-size:18px;line-height:1;padding:0 4px;}
 #${PANEL_ID} .bd{padding:10px 12px;max-height:62vh;overflow:auto;}
 #${PANEL_ID} .cred{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.07);}
-#${PANEL_ID} .cred-line{display:flex;align-items:center;gap:8px;margin:2px 0;}
-#${PANEL_ID} .cred .lb{font-size:11px;color:#8b93a1;}
-#${PANEL_ID} .cred input{flex:1;min-width:120px;background:#2a3038;color:#e6e9ee;
-  border:1px solid rgba(255,255,255,.18);border-radius:5px;padding:4px 8px;font-size:11px;}
 #${PANEL_ID} table{width:100%;border-collapse:collapse;font-size:12px;}
 #${PANEL_ID} th,#${PANEL_ID} td{padding:5px 6px;text-align:left;border-bottom:1px solid rgba(255,255,255,.07);white-space:nowrap;}
 #${PANEL_ID} th{color:#8b93a1;font-weight:600;}
@@ -99,7 +95,7 @@
       ${total - okCount} 个店铺 Content 不可用。常见原因与处置：<br>
       · <b>token 已被撤销</b>：WB 后台重新生成过密钥 → 更新 BCS 店铺里的 apiKey<br>
       · <b>缺少「内容」类别</b>：WB 后台 Settings → API → 新建 token 时勾选「内容」（类别创建后不可改，必须新建）<br>
-      · <b>BCS 未返回 apiKey</b>：需在设置里手动粘贴该店 token
+      · <b>BCS 未返回 apiKey</b>：请登录 BCS 网站并更新该店的 WB API 密钥
     </div>`;
 
     bodyEl.innerHTML = `
@@ -150,7 +146,10 @@
         <span class="ver">v${SYNC_VERSION} · 只读</span>
         <span class="x" title="关闭">×</span>
       </div>
-      <div class="cred" id="${PANEL_ID}-cred"></div>
+      <div class="cred">
+        <button type="button" id="${PANEL_ID}-login">打开 BCS 登录页</button>
+        <span class="tip">登录后，点「开始检测」验证店铺权限。</span>
+      </div>
       <div class="bd" id="${PANEL_ID}-bd"></div>
       <div class="ft">
         <button class="primary" id="${PANEL_ID}-run">开始检测</button>
@@ -160,58 +159,12 @@
     `;
     document.body.appendChild(div);
     div.querySelector('.x').addEventListener('click', () => div.remove());
+    div.querySelector('#' + PANEL_ID + '-login').addEventListener('click', openBcsLogin);
     div.querySelector('#' + PANEL_ID + '-run').addEventListener('click', runProbe);
     div.querySelector('#' + PANEL_ID + '-clear').addEventListener('click', () => {
       gmSave(PROBE_CACHE_KEY, null);
       renderProbeTable(null);
       setProbeStatus('已清空缓存');
     });
-    renderCredRow();
     renderProbeTable(loadProbeCache());
-  }
-
-  // 凭证区：显示 GM 缓存状态 + 手动粘贴兜底（seller 域拿不到插件桥接，只能靠缓存/手动）
-  function renderCredRow() {
-    const el = document.getElementById(PANEL_ID + '-cred');
-    if (!el) return;
-    const c = getCachedCred();
-    const status = c
-      ? `<span class="tag ok">已缓存</span> <span class="mono">…${esc(c.tail)}</span>
-         <span class="tip" style="display:inline">${c.ageMin != null ? c.ageMin + ' 分钟前' : '时间未知'}${c.manual ? ' · 手动' : ''}</span>`
-      : '<span class="tag bad">无凭证</span>';
-    el.innerHTML = `
-      <div class="cred-line">
-        <span class="lb">BCS 凭证</span>${status}
-      </div>
-      <div class="tip" style="margin:0 0 6px">
-        插件只注入 www 域 → 在 www.wildberries.ru 打开任意页面一次，本脚本会自动把 token 缓存到这里；
-        若仍失败，可手动粘贴（保存后上架脚本也会复用）。
-      </div>
-      <div class="cred-line">
-        <input id="${PANEL_ID}-tok" type="text" placeholder="粘贴 token（Authorization: Bearer 后面那段）">
-        <input id="${PANEL_ID}-lk" type="text" placeholder="X-Limit-Key（可空）">
-        <button id="${PANEL_ID}-savecred">保存</button>
-        <button id="${PANEL_ID}-testcred">测试</button>
-      </div>
-    `;
-    el.querySelector('#' + PANEL_ID + '-savecred').addEventListener('click', () => {
-      const t = el.querySelector('#' + PANEL_ID + '-tok').value;
-      const lk = el.querySelector('#' + PANEL_ID + '-lk').value;
-      if (!t.trim()) { showToast('请粘贴 token', 3000); return; }
-      saveManualCred(t, lk);
-      showToast('凭证已保存到 GM（上架脚本也可复用）', 3000);
-      renderCredRow();
-      setProbeStatus('凭证已更新');
-    });
-    el.querySelector('#' + PANEL_ID + '-testcred').addEventListener('click', async () => {
-      setProbeStatus('正在测试凭证…');
-      try {
-        const shops = await fetchShopsFromCloud();
-        setProbeStatus(`凭证可用：读到 ${shops.length} 个店铺`);
-        showToast(`凭证可用，共 ${shops.length} 个店铺`, 3000);
-      } catch (e) {
-        setProbeStatus('凭证不可用：' + e.message);
-        showToast('凭证不可用：' + e.message, 6000);
-      }
-    });
   }

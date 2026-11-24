@@ -66,7 +66,7 @@
     };
 
     if (!shop.apiKey) {
-      row.contentErr = 'BCS 未返回 apiKey（需手动粘贴 token）';
+      row.contentErr = 'BCS 未返回 apiKey，请在 BCS 网站更新该店的 WB API 密钥';
       return row;
     }
 

@@ -1,5 +1,5 @@
   // ============================================================
-  // 4. 列表页悬浮条（独立于上架脚本的工具栏，id 前缀 bcs-sync-）
+  // 4. 列表页悬浮条
   // ============================================================
   const BAR_ID = SYNC_PREFIX + 'bar';
 
@@ -33,6 +33,7 @@
       <span class="cnt" id="${SYNC_PREFIX}cnt">已选 0</span>
     `;
     document.body.appendChild(bar);
+    _lastSelCount = -1;
     bar.querySelector('#' + SYNC_PREFIX + 'open').addEventListener('click', openSyncPanel);
     bar.querySelector('#' + SYNC_PREFIX + 'probe-open').addEventListener('click', () => {
       injectProbePanel();

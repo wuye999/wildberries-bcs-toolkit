@@ -1,44 +1,57 @@
 # Wildberries BCS Toolkit
 
-面向 Wildberries 卖家的两款 Tampermonkey 脚本。**批量急速上架**用于整理商品、设置店铺价格倍数，并通过 BCS 提交上架。**跨店同步**用于比对店铺商品，按选择同步商品内容和图片，或向目标店铺补上架。
+面向 Wildberries 卖家的 Chrome Manifest V3 扩展。**批量急速上架**在 Wildberries 零售站整理商品、设置店铺价格倍数，并通过 BCS 提交上架。**跨店同步**在卖家后台的商品列表（`/card-main/*`）比对店铺商品，按选择同步商品内容和图片，或向目标店铺补上架。
 
 ## 构建与测试
 
 在仓库根目录运行，已用 Node.js 24 验证。
 
 ```powershell
+npm ci
 node build.js
 node --test tests/shelve.test.js
 ```
 
-| 源码 | 构建产物 | 单独构建 |
-| --- | --- | --- |
-| `src/` 批量上架和共用模块 | `dist/bcs_batch_shelve.user.js` | `node build.js shelve` |
-| `src-sync/` 跨店同步 | `dist/bcs_cross_sync.user.js` | `node build.js sync` |
+构建输出一个可直接加载的扩展，并用 `node --check` 检查其中的所有 JavaScript 文件。
 
-测试使用模拟请求和虚构商品价格。官方扩展对照用例读取项目根目录中的本地 1.5.4、1.5.8 扩展副本，缺少副本时跳过相应对照。
+```text
+dist/extension/
+├── manifest.json
+├── background.js
+├── xlsx.mini.min.js
+├── shelve.js
+└── sync.js
+```
+
+离线测试覆盖 Cookie 认证、扩展存储、价格表解析、批量上架和跨店补上架。价格表测试用 SheetJS 在内存中生成示例工作簿。
 
 ## 本地使用
 
-批量上架需要自己的商品价格表。安装 Python 的 `openpyxl` 后，指定表格并重新构建上架脚本。
+1. 在 Chrome 打开 `chrome://extensions`，开启「开发者模式」，点击「加载已解压的扩展程序」，选择 `dist/extension/`。重新构建后，在此页重新加载扩展并刷新相关网页。
+2. 在同一个 Chrome 用户资料中打开 BCS 商品列表并登录。[打开 BCS 登录页](https://wb.bcserp.com/productList)
+3. 在 Wildberries 零售站打开「待上架列表」，在「价格表与上架价」区点击「上传价格表 (.xlsx)」，选择 `商品价格表.xlsx`。上传后可在同一区域查看加载条数、文件名和更新时间。
+4. 在「价格表与上架价」区选择已登记的商品前缀码，并在「店铺选择」区设置上架倍数。跨店同步可在 Wildberries 卖家后台商品列表中使用。
 
-```powershell
-python tools/gen-boss-defaults.py --boss "C:/path/to/商品价格表.xlsx"
-node build.js shelve
-```
+首次安装使用独立的扩展存储。请在扩展界面重新设置店铺和待上架列表。
 
-生成器读取 `Sheet1` 的 B、C、E、F、G 列，依次为 SKU、中文名、包装尺寸和重量、最低售价、四位商品前缀码。第一行是表头，尺寸列示例为 `22*13*5/0.25`（厘米和千克）。默认表格路径为仓库同级的 `wb/data/商品价格表.xlsx`。生成的数据写入 `.local/data/boss-defaults.js`，构建时优先加载。新检出的仓库使用空价格模板，批量上架会阻止提交缺少价格条目的商品。
+### 批量上架价格表
 
-将生成的 `.user.js` 安装到 Tampermonkey。实际操作使用自己的 BCS 登录和有权限的 Wildberries 店铺。现有工作目录的详细维护说明在 `.local/docs/油猴脚本使用文档.md`。
+扩展在浏览器本地解析文件，优先读取 `Sheet1`，否则读取第一个工作表。第一行须包含 `产品中文名`、`尺寸`、`最低售价`、`vendorCode前缀码`，列顺序不限。`卖家SKU` 可选，也可留空。
+
+尺寸填写长、宽、高（厘米）和重量（千克），例如 `7*8*10 /0.34`。四项尺寸和最低售价都须为大于零的有限数字。前缀码去除首尾空格并转换为大写后须为四位英文字母。异常行会被跳过，重复前缀码保留首条有效记录，上传完成后弹窗提示跳过的行。缺少必需列或没有有效记录时，保留当前价格表。
+
+价格表保存在当前 Chrome 用户资料的扩展存储里，重新打开网页后会自动加载，已打开的批量上架标签页也会自动刷新。上架价按最低售价乘以店铺倍数计算，包装尺寸和重量取自价格表。无法匹配价格表的商品会被阻止提交。
 
 ## 目录
 
 | 路径 | 用途 |
 | --- | --- |
-| `tools/` | 价格表生成和扩展适配工具 |
+| `src-ext/` | 扩展清单、后台和内容脚本适配层 |
+| `src/` | 批量上架和共用模块 |
+| `src-sync/` | 跨店同步 |
 | `tests/` | 离线回归测试 |
-| `dist/` | 本地构建产物，可能嵌入商品价格数据 |
+| `dist/extension/` | 可加载的 Chrome 扩展构建产物 |
 | `.local/` | 本地价格数据、开发文档、网页样本、扩展安装包、签名私钥和历史脚本 |
 | `TEMP/` | 历史备份和调试资料 |
 
-Git 跟踪脚本源码、构建和测试工具。构建产物与本地工作资料由 `.gitignore` 排除。
+Git 跟踪扩展源码、构建和测试工具。构建产物与本地工作资料由 `.gitignore` 排除。

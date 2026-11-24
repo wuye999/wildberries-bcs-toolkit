@@ -1,11 +1,82 @@
 
-  // ---- 前缀码表（v1.5.2 起从 BOSS_DEFAULTS 派生，单一数据源；勿手改此处数据）----
-  const PREFIX_CODES = Object.keys(BOSS_DEFAULTS).map(code => {
-    const b = BOSS_DEFAULTS[code];
-    return { sku: b.sku, name: b.name, code };
-  });
-  const PREFIX_CODE_MAP = new Map(PREFIX_CODES.map(p => [p.code, p]));
-  const PREFIX_CODE_SET = new Set(PREFIX_CODE_MAP.keys());
+  const BOSS_DEFAULTS_KEY = 'bcs_boss_defaults_v1';
+  let bossDefaultsFile = null;
+  let BOSS_DEFAULTS = {};
+  let PREFIX_CODES = [];
+  let PREFIX_CODE_MAP = new Map();
+  let PREFIX_CODE_SET = new Set();
+
+  function parseBossDefaultsWorkbook(arrayBuffer) {
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    const sheet = workbook.Sheets.Sheet1 ?? workbook.Sheets[workbook.SheetNames[0]];
+    if (!sheet) throw new Error('价格表没有工作表');
+
+    const [header = [], ...rows] = XLSX.utils.sheet_to_json(sheet, {
+      header: 1, range: 0, defval: '', blankrows: true,
+    });
+    const columns = header.map(value => String(value).trim());
+    const required = ['产品中文名', '尺寸', '最低售价', 'vendorCode前缀码'];
+    const missing = required.filter(name => !columns.includes(name));
+    if (missing.length) throw new Error(`价格表缺少必需列：${missing.join('、')}`);
+
+    const indexes = [...required, '卖家SKU'].map(name => columns.indexOf(name));
+    const entries = [];
+    const items = {};
+    const warnings = [];
+    rows.forEach((row, index) => {
+      const [name, size, price, prefix, sku] = indexes.map(i => String(row[i] ?? '').trim());
+      if (!name && !size && !price && !prefix && !sku) return;
+
+      const code = prefix.toUpperCase();
+      const minPrice = Number(price);
+      const dimensions = size.split(/[*/]/).map(Number);
+      let warning;
+      if (!isValidPrefixCode(code)) {
+        warning = 'vendorCode前缀码必须为 4 位大写字母';
+      } else if (Object.hasOwn(items, code)) {
+        warning = `vendorCode前缀码 ${code} 重复，保留首条`;
+      } else if (!Number.isFinite(minPrice) || minPrice <= 0) {
+        warning = '最低售价必须为大于 0 的有限数字';
+      } else if (dimensions.length !== 4 || dimensions.some(n => !Number.isFinite(n) || n <= 0)) {
+        warning = '尺寸须为长*宽*高/重量，四项均须为大于 0 的有限数字';
+      }
+      if (warning) {
+        warnings.push(`第 ${index + 2} 行：${warning}`);
+        return;
+      }
+
+      const [length, width, height, weight] = dimensions;
+      const item = { sku, name, minPrice, length, width, height, weight };
+      items[code] = item;
+      entries.push({ code, ...item });
+    });
+
+    if (!entries.length) {
+      throw Object.assign(new Error('价格表没有有效条目'), { warnings });
+    }
+    return { entries, items, warnings };
+  }
+
+  function setBossDefaults(items) {
+    BOSS_DEFAULTS = items;
+    PREFIX_CODES = Object.entries(items).map(([code, { sku, name }]) => ({ sku, name, code }));
+    PREFIX_CODE_MAP = new Map(PREFIX_CODES.map(entry => [entry.code, entry]));
+    PREFIX_CODE_SET = new Set(PREFIX_CODE_MAP.keys());
+  }
+
+  function loadBossDefaults() {
+    const file = GM_getValue(BOSS_DEFAULTS_KEY, null);
+    if (file === bossDefaultsFile) return false;
+    bossDefaultsFile = file;
+    setBossDefaults(file?.items ?? {});
+    return true;
+  }
+
+  function saveBossDefaults(fileName, { entries, items }) {
+    return GM_setValue(BOSS_DEFAULTS_KEY, {
+      fileName, updatedAt: Date.now(), count: entries.length, items,
+    }, { optimistic: false });
+  }
 
   // 恰好 4 位大写字母（A-Z）
   function isValidPrefixCode(code) {

@@ -106,28 +106,20 @@
       const end = Math.min(start + BATCH_SIZE, items.length);
       if (onProgress) onProgress(`正在抓取 ${start + 1}~${end}/${items.length}: ${batch.map(it => it.nmId).join(',')}`);
 
-      let detailResp = null;
-      if (!IS_SELLER_HOST) {
-        // ★ v1.8.0 卖家后台：跳过 detail 请求（unsafeWindow.fetch 跨 www 域必败、seller 域无
-        //   wbx__sessionID/__HOST_VERSION__ 指纹），直接走下方 card.json 合成伪 detail（已实验验证可建卡）
-        try {
-          detailResp = await fetchWbDetailBatch(batch.map(it => it.nmId));
-        } catch (e) {
-          // detail 请求整体失败 → 本批全部标记失败（★ v1.7.0 抛错路径仅剩防御意义，
-          // fetchWbDetailBatch 内部已逐商品 try/catch，正常不会走到这里）
-          log.warn(`detail 批量请求失败（${e.message}），本批 ${batch.length} 个商品标记失败`);
-          batch.forEach(it => markItemFetchFailed(it));
-          fail += batch.length;
-          // ★ 403/429/498：WB 风控冷却期，需长冷却后再继续下一批
-          //   （v1.7.0：498 加入冷却正则——WB 风控码，插件视同 429；原正则只认 403/429 会连坐后续批次）
-          if (/403|429|498/.test(e.message)) {
-            const coolMs = 15000 + Math.floor(Math.random() * 15000);
-            log.warn(`检测到 WB 反爬限流，冷却 ${Math.round(coolMs / 1000)} 秒后继续下一批`);
-            if (onProgress) onProgress(`检测到限流，冷却 ${Math.round(coolMs / 1000)} 秒...`);
-            await new Promise(r => setTimeout(r, coolMs));
-          }
-          continue;
+      let detailResp;
+      try {
+        detailResp = await fetchWbDetailBatch(batch.map(it => it.nmId));
+      } catch (e) {
+        log.warn(`detail 批量请求失败（${e.message}），本批 ${batch.length} 个商品标记失败`);
+        batch.forEach(it => markItemFetchFailed(it));
+        fail += batch.length;
+        if (/403|429|498/.test(e.message)) {
+          const coolMs = 15000 + Math.floor(Math.random() * 15000);
+          log.warn(`检测到 WB 反爬限流，冷却 ${Math.round(coolMs / 1000)} 秒后继续下一批`);
+          if (onProgress) onProgress(`检测到限流，冷却 ${Math.round(coolMs / 1000)} 秒...`);
+          await new Promise(r => setTimeout(r, coolMs));
         }
+        continue;
       }
 
       // 按 nmId 映射 detail 返回的 product
@@ -139,15 +131,12 @@
           // ★ v1.7.0：card.json 先抓（basket CDN 稳定、不受反爬影响），
           //   detail 失败时用 card.json 合成伪 detail 兜底，尽力保证商品信息完整性
           const cardInfo = await fetchWbCardInfo(item.nmId);
-          const product = detailResp ? productMap.get(String(item.nmId)) : null;
+          const product = productMap.get(String(item.nmId));
           if (product) {
             applyDetailToItem(item, product, cardInfo);   // detailSource='direct'
           } else if (cardInfo) {
             // detail 失败（直连 498/429 重试后仍失败 + 代理被 WB 风控 404）→ card.json 合成兜底
-            // ★ v1.8.0 卖家后台：detail 通道本就跳过，此处为常态路径（非失败降级）
-            log.warn(IS_SELLER_HOST
-              ? `卖家后台模式（nm=${item.nmId}）：使用 card.json 合成伪 detail`
-              : `抓取 ${item.nmId} detail 失败，使用 card.json 合成伪 detail 兜底`);
+            log.warn(`抓取 ${item.nmId} detail 失败，使用 card.json 合成伪 detail 兜底`);
             const syntheticProduct = buildSyntheticDetail(item, cardInfo);
             applyDetailToItem(item, syntheticProduct, cardInfo, { synthetic: true });   // detailSource='synthetic'
             synthetic++;

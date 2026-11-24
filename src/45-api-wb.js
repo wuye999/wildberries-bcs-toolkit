@@ -2,13 +2,7 @@
   // 4. WB官方接口数据获取（云端API模式核心）
   // ============================================================
 
-  // basket路径计算（权威来源：插件 index.ts.js.map → src/content/utils/wbHost/wbBasketUrl.ts）
-  // ★ v1.4.6 修正：v1.4.1 曾误用 BCS_API完整文档_核对版.md 3.2 节的表格（数值有误），
-  //   导致 card.json/图片 算出错误的 basket 主机返回 404。以下为插件能正常工作的权威表，勿再改动。
-  // ★ v1.8.5 对齐官方插件 1.3.4：NM_BASKET_SHARD_LIMITS 由 52 区间扩到 65 区间
-  //   （新增 19589/53 ~ 28805/65），且越界回退值由硬编码 '47' 改为「表尾分片」。
-  //   插件 1.3.4 另外新增运行时动态拉取 cdn.wbbasket.ru/api/v3/upstreams 覆盖内置表，
-  //   脚本侧不移植（GM 跨域受 @connect 白名单限制，未知新分片反而会被拦），保持静态表 + 随插件升级同步。
+  // 用商品编号计算 card.json 和图片的 CDN 路径。
   function calcBasketPath(nmId) {
     const id = parseInt(String(nmId), 10);
     const vol = Math.floor(id / 100000);
@@ -132,7 +126,7 @@
         method: options.method || 'GET',
         url: url,
         headers: options.headers || {},
-        anonymous: false,  // ★ 携带 cookie（解决沙箱下 fetch 不发 cookie 的 403 问题）
+        anonymous: false,
         timeout: options.timeout || 30000,
         onload: (resp) => {
           if (resp.status >= 200 && resp.status < 300) {
@@ -206,16 +200,16 @@
   // 获取单个 WB 商品详情（复刻插件 fetchWbProductDetail / fetchWithWbApiQueue）
   // ★ v1.4.5：WB 今日 antibot 升级后校验 nm 单值，批量逗号分隔 → 400。
   //   因此每次只请求一个 nm；headers 与插件完全一致（仅 x-spa-version + deviceid，无 accept/referer）；
-  //   页面上下文 fetch（unsafeWindow.fetch + credentials include）直连，失败降级 BCS 代理（单 nm）。
+  //   当前站点的 fetch 直连携带 Cookie，失败降级 BCS 代理（单 nm）。
   // ★ v1.7.0：498/429 退避重试 1 次（WB 风控码，插件 1.2.4 handleBlocked 视同 429：冷却+换号重试；
-  //   油猴无 cookie 池，改为延迟 3~5s 后重读 deviceid——wbx__sessionID 可能已被 WB 轮换）；
+  //   延迟 3~5s 后重读 deviceid，wbx__sessionID 可能已被 WB 轮换）；
   //   非 2xx 打印响应头/body 前 500 字符（log.errorDetail），498 响应常含风控原因/挑战 cookie，留证据。
   async function fetchWbDetailOne(nmId) {
     const wbUrl = buildWbDetailUrl(nmId);
+    const { pathname, search } = new URL(wbUrl);
     // ---- 主通道：页面上下文 fetch 直连（498/429 退避重试 1 次）----
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        const w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
         const headers = {
           'x-spa-version': getWbSpaVersion(),
           'deviceid': getWbDeviceId(),   // 每次实时读取，不缓存
@@ -223,7 +217,7 @@
           //   必须携带（对齐官网 XHR），缺失直接 403（插件源码注释原话）
           'x-requested-with': 'XMLHttpRequest',
         };
-        const res = await w.fetch(wbUrl, { method: 'GET', headers, credentials: 'include' });
+        const res = await window.fetch(pathname + search, { method: 'GET', headers, credentials: 'include' });
         if (res.ok) {
           const data = await res.json();
           return (data && data.products && data.products[0]) || null;

@@ -5,63 +5,21 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { locateAuthBundle, makeBridge, MARKER } = require('../tools/patch_v151');
+const XLSX = require('xlsx');
 const root = path.resolve(__dirname, '..');
-const pluginDir = 'WildberriesAl上品助手V1.5.8';
-const hasOfficialPlugin = fs.existsSync(path.join(root, pluginDir));
-const requiresPlugin = { skip: !hasOfficialPlugin && '需要本地 1.5.8 扩展副本' };
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const manifest = JSON.parse(read('src-ext/manifest.json'));
 const clone = value => JSON.parse(JSON.stringify(value));
 const quiet = { info() {}, warn() {}, error() {}, errorDetail() {} };
 const instant = callback => { queueMicrotask(callback); return 0; };
-// 1.5.8 安装包只有编译产物。执行选中的纯函数，避开扩展初始化和 HTTP。
-function officialWb(parts) {
-  const official = vm.createContext({});
-  const shared = 'pluginFocusReset.js';
-  const ui = 'index.ts.js';
-  const sections = {
-    description: [
-      [shared, 'const py=2e3;', 'const Cf='],
-      [shared, 'const AT=[', 'function uv('],
-    ],
-    media: [
-      [shared, 'let bg=[[143,"01"]', 'class mT'],
-      [shared, 'function PT(', 'function Ow('],
-    ],
-    detail: [[shared, 'const Aw="-1257786";', 'function rT(']],
-    template: [[ui, 'function Tc(', 'function R2(']],
-    direct: [
-      [ui, 'function Dc(', 'function OO('],
-      [ui, 'function DO(', 'function CC('],
-    ],
-    collectBox: [
-      [shared, 'function cL(', 'function wu('],
-      [shared, 'function Cy(', 'function Wne('],
-      [ui, 'function Hu(', 'function O5('],
-    ],
-  };
-  for (const part of parts) {
-    for (const [file, start, end] of sections[part]) {
-      const bundle = read(pluginDir + '/' + file);
-      const from = bundle.indexOf(start);
-      assert.notEqual(from, -1, start);
-      const to = bundle.indexOf(end, from + start.length);
-      assert.notEqual(to, -1, end);
-      vm.runInContext(bundle.slice(from, to), official, { filename: file });
-    }
-    if (part === 'description') vm.runInContext('const ff=py; const ms=ki;', official);
-    if (part === 'collectBox') vm.runInContext('const Hb=cL; const Bx=Cy;', official);
-  }
-  return official;
-}
 
 function context(files, extra = {}) {
   const storage = new Map();
   const c = vm.createContext({
-    console, log: quiet, setTimeout: instant, clearTimeout() {},
+    console, log: quiet, URL, setTimeout: instant, clearTimeout() {},
     GM_getValue: (key, fallback) => storage.get(key) ?? fallback,
     GM_setValue: (key, value) => storage.set(key, value),
-    localStorage: { getItem: () => null }, IS_SELLER_HOST: false,
+    localStorage: { getItem: () => null },
     document: { getElementById: () => null }, showToast() {}, alert() {}, confirm: () => true,
     ...extra,
   });
@@ -95,56 +53,304 @@ function shelver(extra = {}) {
   const c = context(['src/26-boss-defaults.js', 'src/30-config.js', 'src/45-api-wb.js',
     'src/50-fetcher.js', 'src/65-shelver.js', 'src/86-ui-start.js'], {
     BCS_API_BASE: 'https://wb.bcserp.com/prod-api',
-    BOSS_DEFAULTS: {
-      QAAA: { sku: 'TEST-A', name: '测试商品 A', minPrice: 50, length: 16, width: 9, height: 4, weight: 0.2 },
-      QBBB: { sku: 'TEST-B', name: '测试商品 B', minPrice: 60, length: 25, width: 9, height: 4, weight: 0.3 },
-      QCCC: { sku: 'TEST-C', name: '测试商品 C', minPrice: 42.4, length: 20, width: 9, height: 4, weight: 0.3 },
-    },
     shopsCache: shops(), listedNmIdSet: new Set(), listedDetailMap: new Map(), saveListedCache() {},
     bcsApiCall: async () => ({ code: 200, rows: [], total: 0 }), ...extra,
+  });
+  c.setBossDefaults({
+    QAAA: { sku: 'TEST-A', name: '测试商品 A', minPrice: 50, length: 16, width: 9, height: 4, weight: 0.2 },
+    QBBB: { sku: 'TEST-B', name: '测试商品 B', minPrice: 60, length: 25, width: 9, height: 4, weight: 0.3 },
+    QCCC: { sku: 'TEST-C', name: '测试商品 C', minPrice: 42.4, length: 20, width: 9, height: 4, weight: 0.3 },
   });
   c.inputConfig = config(); c.inputItem = item();
   c.evaluate('userConfig = inputConfig; pendingList = [inputItem];');
   return c;
 }
 
-for (const [version, className, instance] of [['1.5.4', 'JE', 'Qe'], ['1.5.8', 'zx', 'Qe']]) {
-  const dir = `WildberriesAl上品助手V${version}`;
-  const skip = !fs.existsSync(path.join(root, dir)) && `需要本地 ${version} 扩展副本`;
-  test(`${version} 桥接可精确还原原件且保留版本检查`, { skip }, () => {
-    const found = locateAuthBundle(path.join(root, dir));
-    assert.equal(path.basename(found.file), 'pluginFocusReset.js');
-    assert.equal(found.className, className);
-    assert.equal(found.instance, instance);
-    assert.ok(found.code.includes(MARKER));
-    assert.equal(found.code.replace(makeBridge(found.instance), ''), fs.readFileSync(found.file + '.bak', 'utf8'));
-    assert.equal(JSON.parse(read(dir + '/manifest.json')).version, version);
-    assert.ok(read(dir + '/index.ts.js').includes('checkNewVersionInfo?platformKey=wbAi'));
-    const endpoints = read(dir + '/ozonMeasureIdbProtocol.js');
-    assert.ok(endpoints.includes('BCS_WB_BASE_URL:"https://wb.bcserp.com/prod-api"'));
-    assert.ok(endpoints.includes('WB_QUICK_SHELVE_NEW:"/system/wbCollection/wb/new"'));
-    assert.ok(endpoints.includes('WB_COLLECT_BOX_SAVE:"/system/collectBox"'));
+const priceHeader = ['产品中文名', '尺寸', '最低售价', 'vendorCode前缀码'];
+const xlsxMini = path.relative(root, require.resolve('xlsx/dist/xlsx.mini.min.js'));
+
+function priceWorkbook(sheets) {
+  const workbook = XLSX.utils.book_new();
+  for (const [name, rows] of Object.entries(sheets)) {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name);
+  }
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+}
+
+test('解析真实表头与空卖家 SKU，优先读取 Sheet1 并按前缀更新价格和包装', () => {
+  const c = context([xlsxMini, 'src/26-boss-defaults.js'], { ArrayBuffer });
+  const parsed = c.parseBossDefaultsWorkbook(priceWorkbook({
+    说明: [['忽略这个工作表']],
+    Sheet1: [
+      ['产品图片', '卖家SKU', ...priceHeader, '马帮库存SKU', '发货方式'],
+      [null, null, ' 冲牙器 ', '7*8*10 /0.34', 41.5, ' abcd ', 'MB-1', '仓发'],
+      [null, ' SKU-2 ', '收纳盒', '20*25*8/ 6.5', ' 16.2 ', 'QBBB'],
+    ],
+  }));
+  const expected = { sku: '', name: '冲牙器', minPrice: 41.5, length: 7, width: 8, height: 10, weight: 0.34 };
+  assert.deepEqual(clone(parsed.entries[0]), { code: 'ABCD', ...expected });
+  assert.equal(parsed.items.QBBB.sku, 'SKU-2');
+  assert.equal(parsed.items.QBBB.weight, 6.5);
+  assert.equal(parsed.warnings.length, 0);
+  assert.deepEqual(clone(c.evaluate('PREFIX_CODES')), []);
+
+  c.setBossDefaults(parsed.items);
+  assert.deepEqual(clone(c.evaluate('PREFIX_CODES')), [
+    { sku: '', name: '冲牙器', code: 'ABCD' },
+    { sku: 'SKU-2', name: '收纳盒', code: 'QBBB' },
+  ]);
+  assert.equal(c.evaluate("PREFIX_CODE_SET.has('ABCD')"), true);
+  assert.equal(c.getPrefixCodeLabel('ABCD'), 'ABCD - 冲牙器');
+  assert.deepEqual(clone(c.getItemBossDefaults({ vendorCode: 'BCS-ABCD-123' }, {})), expected);
+  assert.equal(c.getItemBossDefaults({}, { prefixCode: 'QBBB' }).minPrice, 16.2);
+});
+
+test('按第一行列名读取重排列，支持无卖家 SKU，缺少必需列时报列名', () => {
+  const c = context([xlsxMini, 'src/26-boss-defaults.js'], { ArrayBuffer });
+  const parsed = c.parseBossDefaultsWorkbook(priceWorkbook({
+    价格清单: [
+      ['发货方式', '最低售价', 'vendorCode前缀码', '尺寸', '产品中文名'],
+      ['仓发', 10, 'ABCD', ' 7/8*10/0.34 ', '冲牙器'],
+    ],
+  }));
+  assert.equal(parsed.items.ABCD.sku, '');
+  assert.equal(parsed.items.ABCD.height, 10);
+  assert.throws(() => c.parseBossDefaultsWorkbook(priceWorkbook({
+    Sheet1: [['产品中文名', '最低售价'], ['冲牙器', 10]],
+  })), /缺少必需列：尺寸、vendorCode前缀码/);
+  assert.throws(() => c.parseBossDefaultsWorkbook(priceWorkbook({
+    Sheet1: [[], priceHeader, ['冲牙器', '7*8*10/0.34', 10, 'ABCD']],
+  })), /缺少必需列：产品中文名、尺寸、最低售价、vendorCode前缀码/);
+});
+
+test('跳过空关键行，对重复前缀、非法前缀、售价和尺寸记录实际行号', () => {
+  const c = context([xlsxMini, 'src/26-boss-defaults.js'], { ArrayBuffer });
+  const parsed = c.parseBossDefaultsWorkbook(priceWorkbook({
+    Sheet1: [
+      [...priceHeader, '发货方式'],
+      ['首条', '7*8*10/0.34', 10, 'ABCD'],
+      [],
+      [null, null, null, null, '仓发'],
+      ['重复项', '7*8*10/0.34', 20, ' abcd '],
+      ['非法前缀', '7*8*10/0.34', 10, 'AB1D'],
+      ['非法售价', '7*8*10/0.34', 'Infinity', 'QBBB'],
+      ['非法尺寸', '7*8*10/0', 10, 'QCCC'],
+    ],
+  }));
+  assert.deepEqual(Object.keys(parsed.items), ['ABCD']);
+  assert.equal(parsed.items.ABCD.minPrice, 10);
+  assert.deepEqual(clone(parsed.warnings), [
+    '第 5 行：vendorCode前缀码 ABCD 重复，保留首条',
+    '第 6 行：vendorCode前缀码必须为 4 位大写字母',
+    '第 7 行：最低售价必须为大于 0 的有限数字',
+    '第 8 行：尺寸须为长*宽*高/重量，四项均须为大于 0 的有限数字',
+  ]);
+  c.setBossDefaults(parsed.items);
+  assert.throws(() => c.parseBossDefaultsWorkbook(priceWorkbook({
+    Sheet1: [priceHeader, ['非法售价', '7*8*10/0.34', 0, 'ABCD']],
+  })), error => /没有有效条目/.test(error.message) && /第 2 行.*最低售价/.test(error.warnings[0]));
+  assert.equal(c.getBossDefaults('ABCD').minPrice, 10);
+});
+
+function mockBackground({ getCookies, openTab, fetch: mockFetch }) {
+  let listener;
+  vm.runInNewContext(read('src-ext/background.js'), {
+    URL, AbortController, setTimeout, clearTimeout, btoa, fetch: mockFetch,
+    chrome: {
+      runtime: { getManifest: () => manifest, onMessage: { addListener: fn => { listener = fn; } } },
+      cookies: { getAll: getCookies },
+      tabs: { create: openTab },
+    },
+  });
+  return message => new Promise(resolve => {
+    const handled = listener(clone(message), {}, response => resolve(clone(response)));
+    if (!handled) resolve(undefined);
   });
 }
 
-test('桥接取得凭证、捕获错误、屏蔽非白名单/外部来源；重复导入只注册一次', async () => {
-  let handler, listeners = 0;
-  const replies = [];
-  const w = { location: { hostname: 'www.wildberries.ru', origin: 'https://www.wildberries.ru' },
-    addEventListener(type, callback) { handler = callback; listeners++; },
-    postMessage(data) { replies.push(data); } };
-  w.top = w;
-  const c = vm.createContext({ window: w, service: { getToken: async () => 'DUMMY', getLimitKey: async () => { throw new Error('test error'); } } });
-  vm.runInContext(makeBridge('service') + makeBridge('service'), c);
-  assert.equal(listeners, 1);
-  const send = data => handler({ source: w, origin: w.location.origin, data: { type: 'BCS_CALL', id: 'test', ...data } });
-  await send({ method: 'getToken' }); assert.equal(replies.pop().result, 'DUMMY');
-  await send({ method: 'getLimitKey' }); assert.equal(replies.pop().error, 'test error');
-  await send({ method: 'constructor' }); assert.match(replies.pop().error, /method not found/);
-  await send({ method: 'getToken', args: ['x'] }); assert.match(replies.pop().error, /invalid args/);
-  await handler({ source: {}, origin: w.location.origin, data: { type: 'BCS_CALL', id: 'x', method: 'getToken' } });
-  assert.equal(replies.length, 0);
-  assert.doesNotThrow(() => vm.runInNewContext(makeBridge('service'), {})); // worker 无 window
+test('后台按域名优先级选择非空 BCS Cookie，并打开固定的登录页', async () => {
+  let cookies = [
+    { name: 'Admin-Token', domain: 'other.bcserp.com', value: 'OTHER' },
+    { name: 'Admin-Token', domain: '.bcserp.com', value: 'ROOT' },
+    { name: 'Admin-Token', domain: 'wb.bcserp.com', value: 'WB' },
+    { name: 'Limit-Key', domain: 'wb.bcserp.com', value: ' ' },
+    { name: 'Limit-Key', domain: '.bcserp.com', value: 'LK' },
+  ];
+  const tabs = [];
+  const send = mockBackground({
+    getCookies: async filter => { assert.deepEqual(clone(filter), { domain: 'bcserp.com' }); return cookies; },
+    openTab: async tab => { tabs.push(clone(tab)); },
+  });
+  assert.deepEqual(await send({ type: 'EXT_GET_BCS_AUTH' }), { token: 'WB', limitKey: 'LK' });
+  cookies = cookies.slice(0, 2);
+  assert.deepEqual(await send({ type: 'EXT_GET_BCS_AUTH' }), { token: 'ROOT', limitKey: '' });
+  cookies.push({ name: 'Admin-Token', domain: '.wb.bcserp.com', value: 'WB-DOMAIN' });
+  assert.deepEqual(await send({ type: 'EXT_GET_BCS_AUTH' }), { token: 'WB-DOMAIN', limitKey: '' });
+  cookies = [];
+  assert.deepEqual(await send({ type: 'EXT_GET_BCS_AUTH' }), { token: '', limitKey: '' });
+  assert.deepEqual(await send({ type: 'EXT_OPEN_BCS_LOGIN', url: 'https://example.invalid/' }), { ok: true });
+  assert.deepEqual(tabs, [{ url: 'https://wb.bcserp.com/productList' }]);
+  assert.equal(await send({ type: 'UNKNOWN' }), undefined);
+});
+
+test('扩展存储只预载一次，并应用来自其他标签页的更新与删除', async () => {
+  let applyChanges, finishRead;
+  let reads = 0;
+  const writes = [];
+  const snapshot = new Promise(resolve => { finishRead = resolve; });
+  const c = context(['src-ext/shim.js', 'src/30-config.js'], {
+    chrome: { storage: {
+      local: {
+        get: key => { assert.equal(key, null); reads++; return snapshot; },
+        set: async data => { writes.push(clone(data)); },
+      },
+      onChanged: { addListener: fn => { applyChanges = fn; } },
+    } },
+  });
+  const ready = Promise.all([c.extStorageReady(), c.extStorageReady()]);
+  const key = 'bcs_batch_v131_settings';
+  applyChanges({ [key]: { newValue: '{"prefixCode":"QBBB"}' } }, 'local');
+  finishRead({
+    [key]: '{"prefixCode":"QAAA"}',
+    bcs_batch_v131_pending: '[{"nmId":12345}]',
+  });
+  await ready;
+  assert.equal(reads, 1);
+  assert.equal(c.loadConfig().prefixCode, 'QBBB');
+  assert.equal(c.loadPending()[0].nmId, 12345);
+  applyChanges({ [key]: { newValue: '{"prefixCode":"QCCC"}' } }, 'sync');
+  assert.equal(c.loadConfig().prefixCode, 'QBBB');
+  applyChanges({ [key]: {} }, 'local');
+  assert.equal(c.loadConfig().prefixCode, '');
+  c.saveConfig({ prefixCode: 'QCCC' });
+  assert.equal(c.loadConfig().prefixCode, 'QCCC');
+  assert.deepEqual(writes, [{ [key]: '{"prefixCode":"QCCC"}' }]);
+});
+
+test('启动加载价格表，跨标签页刷新设置与待上架列表，写入失败保留当前价格表', async () => {
+  let applyChanges, start, rejectWrite;
+  const key = 'bcs_boss_defaults_v1';
+  const previous = { fileName: '原价格表.xlsx', updatedAt: 1, count: 1, items: {
+    QAAA: { sku: '', name: '商品 A', minPrice: 10, length: 7, width: 8, height: 10, weight: 0.34 },
+  } };
+  const replacement = { fileName: '新价格表.xlsx', updatedAt: 2, count: 1, items: {
+    QBBB: { sku: '', name: '商品 B', minPrice: 20, length: 20, width: 25, height: 8, weight: 6.5 },
+  } };
+  const rendered = [];
+  const writes = [];
+  const c = context(['src-ext/shim.js', 'src/26-boss-defaults.js', 'src/30-config.js'], {
+    chrome: { storage: {
+      local: {
+        get: async () => ({ [key]: previous }),
+        set: async data => {
+          if (rejectWrite) throw new Error('存储空间不足');
+          writes.push(clone(data));
+        },
+      },
+      onChanged: { addListener: fn => { applyChanges = fn; } },
+    } },
+    document: { readyState: 'loading', addEventListener: (_, listener) => { start = listener; } },
+    window: { addEventListener() {} },
+    setTimeout() {}, setInterval() {}, loadListedCache: () => false,
+    panelEl: null,
+    injectToolbar: () => assert.equal(c.getBossDefaults('QAAA').minPrice, 10),
+    renderPriceSettings: () => rendered.push('settings'),
+    renderPendingList: () => rendered.push('list'),
+  });
+  c.evaluate('(function () {\n' + read('src/90-main.js'));
+  await start();
+  assert.equal(c.evaluate('bossDefaultsFile.fileName'), previous.fileName);
+
+  c.panelEl = {};
+  applyChanges({ [key]: { newValue: replacement } }, 'local');
+  assert.equal(c.getBossDefaults('QAAA'), null);
+  assert.equal(c.getBossDefaults('QBBB').weight, 6.5);
+  assert.deepEqual(rendered, ['settings', 'list']);
+
+  const parsed = { entries: [{ code: 'QAAA' }], items: previous.items };
+  rejectWrite = true;
+  await assert.rejects(c.saveBossDefaults(previous.fileName, parsed), /存储空间不足/);
+  assert.equal(c.loadBossDefaults(), false);
+  assert.equal(c.evaluate('bossDefaultsFile.fileName'), replacement.fileName);
+  assert.equal(c.getBossDefaults('QBBB').minPrice, 20);
+
+  rejectWrite = false;
+  await c.saveBossDefaults(previous.fileName, parsed);
+  const saved = writes[0][key];
+  assert.ok(saved.updatedAt > replacement.updatedAt);
+  assert.deepEqual(saved, { ...previous, updatedAt: saved.updatedAt });
+  assert.equal(c.loadBossDefaults(), true);
+  assert.equal(c.getBossDefaults('QAAA').minPrice, 10);
+});
+
+test('跨店同步等待存储就绪并跟随卖家后台 SPA 路由', async () => {
+  let finishLoad, tick;
+  const ready = new Promise(resolve => { finishLoad = resolve; });
+  const location = { pathname: '/dashboard' };
+  const elements = new Set();
+  const c = context([], {
+    location, BAR_ID: 'bar', PANEL_ID: 'probe', PANEL_SYNC: 'sync',
+    document: { readyState: 'complete', getElementById: id => (
+      elements.has(id) ? { remove: () => elements.delete(id) } : null
+    ) },
+    extStorageReady: () => ready,
+    loadConfig: () => ({ prefixCode: 'QAAA' }),
+    injectSyncBar: () => elements.add('bar'),
+    pollSelection() {},
+    setInterval: fn => { tick = fn; },
+  });
+  c.evaluate('(function () { let userConfig;\n' + read('src-sync/40-main.js'));
+  assert.equal(tick, undefined);
+  finishLoad();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(elements.size, 0);
+  location.pathname = '/card-main/list';
+  tick();
+  assert.ok(elements.has('bar'));
+  elements.add('probe').add('sync');
+  location.pathname = '/dashboard';
+  tick();
+  assert.equal(elements.size, 0);
+});
+
+test('扩展请求适配 HTTP 状态、二进制图片、超时及网络错误', async () => {
+  const calls = [];
+  const sendMessage = mockBackground({
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/timeout')) {
+        return new Promise((_, reject) => {
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        });
+      }
+      if (url.endsWith('/error')) throw new Error('网络错误');
+      if (url.endsWith('.webp')) return new Response(Uint8Array.of(0, 127, 255));
+      return new Response('{"code":401}', { status: 401 });
+    },
+  });
+  const c = context(['src-ext/shim.js'], {
+    atob, chrome: { runtime: { sendMessage }, storage: { onChanged: { addListener() {} } } },
+  });
+  const request = options => new Promise((resolve, reject) => {
+    c.GM_xmlhttpRequest({ method: 'GET', onload: resolve, onerror: e => reject(new Error(e.error)),
+      ontimeout: () => reject(new Error('超时')), ...options });
+  });
+  const result = await request({
+    url: 'https://wb.bcserp.com/test', method: 'POST', headers: { 'Content-Type': 'application/json' }, data: '{}',
+  });
+  assert.deepEqual(clone(result), { ok: false, status: 401, responseText: '{"code":401}' });
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.body, '{}');
+  assert.equal(calls[0].options.headers['Content-Type'], 'application/json');
+  const photo = await request({ url: 'https://basket-01.wbbasket.ru/1.webp', responseType: 'arraybuffer', anonymous: false });
+  assert.deepEqual([...new Uint8Array(photo.response)], [0, 127, 255]);
+  assert.equal(calls[1].options.credentials, 'include');
+  await assert.rejects(request({ url: 'https://wb.bcserp.com/timeout', timeout: 1 }), /超时/);
+  assert.equal(calls[2].options.signal.aborted, true);
+  await assert.rejects(request({ url: 'https://wb.bcserp.com/error' }), /网络错误/);
+  await assert.rejects(request({ url: 'https://wb.bcserp.com.example.invalid/' }), /授权范围/);
+  assert.equal(calls.length, 4);
 });
 
 test('描述清洗保留其他卡字段，并去除 HTML、指定字符与标点墙', () => {
@@ -182,28 +388,59 @@ test('不同倍数组独立价格、同一货号、库存 0、字母尺码、清
   }
 });
 
-test('描述清洗、详情 URL 和 65 个图片分片与官方 1.5.8 一致', requiresPlugin, () => {
-  const c = shelver(), official = officialWb(['description', 'media', 'detail']);
-  for (const text of ['', null, '<p>abc</p> <b>&amp; ./</b>', 'Название: 1. Текст./ &',
-    'x'.repeat(4000), 'Текст\n' + '*'.repeat(50), 'Текст' + '!'.repeat(39) + ' ',
-    'Вся информация предоставлена продавцом\nТекст']) {
-    assert.equal(c.cleanWbCardDescription(text), official.vy(text));
+test('描述清洗和图片边界分片符合商品请求格式', () => {
+  const c = shelver();
+  for (const [text, expected] of [
+    ['', ''], [null, ''], ['Название: 1. Текст./ &', 'Название: 1. Текст'],
+    ['x'.repeat(4000), 'x'.repeat(2000)], ['Текст\n' + '*'.repeat(50), 'Текст'],
+    ['Текст' + '!'.repeat(39) + ' ', 'Текст' + '!'.repeat(39)],
+    ['Вся информация предоставлена продавцом\nТекст', 'Текст'],
+  ]) {
+    assert.equal(c.cleanWbCardDescription(text), expected);
   }
-  const table = vm.runInContext('bg', official);
-  assert.equal(table.length, 65);
-  for (const [upper] of table) for (const nm of [upper * 100000, (upper + 1) * 100000]) {
-    assert.equal(c.getCardJsonUrl(nm), official.dT(nm));
-    assert.equal(c.getMainImageUrl(nm), official.ld(nm));
-  }
-  assert.equal(c.getMainImageUrl(9999999999), official.ld(9999999999));
-  assert.equal(c.buildWbDetailUrl(12345), official.Ew(12345));
+  const limits = [
+    143, 287, 431, 719, 1007, 1061, 1115, 1169, 1313, 1601, 1655, 1919, 2045,
+    2189, 2405, 2621, 2837, 3053, 3269, 3485, 3701, 3917, 4133, 4349, 4565, 4877,
+    5189, 5501, 5813, 6125, 6437, 6749, 7061, 7373, 7685, 7997, 8309, 8741, 9173,
+    9605, 10373, 11141, 11909, 12677, 13445, 14213, 14981, 15749, 16517, 17285,
+    18053, 18821, 19589, 20357, 21125, 21893, 22661, 23429, 24197, 24965, 25733,
+    26501, 27269, 28037, 28805,
+  ];
+  limits.forEach((limit, index) => {
+    for (const [vol, shard] of [[limit, index + 1], [limit + 1, Math.min(index + 2, 65)]]) {
+      const nm = vol * 100000;
+      const basket = String(shard).padStart(2, '0');
+      const base = `https://basket-${basket}.wbbasket.ru/vol${vol}/part${vol * 100}/${nm}`;
+      assert.equal(c.getCardJsonUrl(nm), base + '/info/ru/card.json');
+      assert.equal(c.getMainImageUrl(nm), base + '/images/big/1.webp');
+    }
+  });
+  assert.equal(c.getMainImageUrl(9999999999),
+    'https://basket-65.wbbasket.ru/vol99999/part9999999/9999999999/images/big/1.webp');
 });
 
-test('商品视频路径与官方 1.5.8 一致，覆盖 144 个分片余数及无视频卡片', requiresPlugin, () => {
-  const c = shelver(), official = officialWb(['media']);
+test('详情请求使用页面同源的 window.fetch，保留请求参数和 Cookie', async () => {
+  const calls = [];
+  const c = shelver({ window: { fetch: async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, json: async () => ({ products: [{ id: 12345 }] }) };
+  } } });
+  const expected = '/__internal/u-card/cards/v4/detail?appType=1&curr=rub&dest=-1257786&spp=30&hide_vflags=4294967296&hide_dtype=15&mtype=257&lang=ru&ab_testing=false&nm=12345';
+  assert.equal(c.buildWbDetailUrl(12345), 'https://www.wildberries.ru' + expected);
+  assert.equal((await c.fetchWbDetailOne(12345)).id, 12345);
+  assert.equal(calls[0].url, expected);
+  assert.equal(calls[0].options.credentials, 'include');
+  assert.equal(calls[0].options.headers['x-requested-with'], 'XMLHttpRequest');
+});
+
+test('商品视频路径覆盖 144 个分片余数及无视频卡片', () => {
+  const c = shelver();
   const card = { media: { has_video: true } };
-  for (let nmId = 1334124800; nmId < 1334124800 + 144; nmId++) {
-    assert.equal(c.getWbProductVideoUrl(nmId, card), official.bb(nmId, card));
+  for (let vol = 0; vol < 144; vol++) {
+    const nm = 1334124720 + vol;
+    const basket = String(1 + (vol - vol % 12) / 12).padStart(2, '0');
+    assert.equal(c.getWbProductVideoUrl(nm, card),
+      `https://videonme-basket-${basket}.wbbasket.ru/vol${vol}/part133412/${nm}/mp4/360p/1.mp4`);
   }
   assert.equal(c.getWbProductVideoUrl(1334124858, { media: { hasVideo: true } }),
     'https://videonme-basket-12.wbbasket.ru/vol138/part133412/1334124858/mp4/360p/1.mp4');
@@ -212,12 +449,13 @@ test('商品视频路径与官方 1.5.8 一致，覆盖 144 个分片余数及�
   assert.equal(c.getWbProductVideoUrl('invalid', card), '');
 });
 
-test('提交中更改界面配置不影响后续倍数组的品牌、尺寸、店铺和价格', async () => {
+test('提交中更新价格表与界面配置不影响后续倍数组的品牌、尺寸、店铺和价格', async () => {
   const requests = [];
   let c;
   c = shelver({ bcsApiCall: async (_, options) => {
     requests.push(clone(options.data));
     c.evaluate("userConfig.prefixCode = 'QBBB'; userConfig.settings.carryBrand = true; userConfig.shopConfigs[2].priceMultiplier = 1;");
+    c.setBossDefaults({});
     return { code: 200 };
   } });
   await c.batchShelve([item()]);
@@ -284,6 +522,19 @@ test('一键上架准备遇到查重错误时没有 POST，按钮恢复，错误
   assert.equal(c.evaluate('batchPreparing'), false);
 });
 
+test('查重期间更换价格表时停止提交并提示重新开始', async () => {
+  let posts = 0;
+  const alerts = [];
+  const c = shelver({ alert: message => alerts.push(message), bcsApiCall: async (_, options) => {
+    if (options?.method === 'POST') posts++;
+    else c.setBossDefaults({});
+    return { code: 200, rows: [], total: 0 };
+  } });
+  await c.onStartBatch();
+  assert.equal(posts, 0);
+  assert.deepEqual(alerts, ['准备期间价格表已更新，请重新开始上架']);
+});
+
 test('一键上架从查重到确认/提交均使用开始时的配置和商品快照', async () => {
   const posts = [];
   let c;
@@ -298,41 +549,60 @@ test('一键上架从查重到确认/提交均使用开始时的配置和商品�
   assert.ok(posts.every(r => r.shopDatas[0].name === 'Товар' && r.brandStatus === false));
 });
 
-function authContext(replies, extra = {}) {
+function authContext(replies, getCookies = async () => [{ name: 'Admin-Token', domain: 'wb.bcserp.com', value: 'DUMMY' }], extra = {}) {
   const requests = [];
-  const c = context(['src/30-config.js', 'src/40-api-bcs.js'], {
-    IS_SELLER_HOST: true,
+  const c = context(['src/40-api-bcs.js'], {
+    chrome: { runtime: { sendMessage: mockBackground({ getCookies }) } },
     GM_xmlhttpRequest: request => { requests.push(request); const next = replies.shift();
       queueMicrotask(() => typeof next === 'function' ? next(request) : request.onload({ status: 200, responseText: JSON.stringify(next) })); },
     ...extra,
   });
   c.requests = requests;
-  c.storage.set('bcs_bcs_cred_cache', JSON.stringify({ token: 'Bearer DUMMY', limitKey: 'LK' }));
   return c;
 }
 
-test('认证规范化 Bearer/并发合并认证；插件明确退出登录时清缓存', async () => {
-  let calls = 0;
-  const c = authContext([], { IS_SELLER_HOST: false, callApi: async method => { calls++; return method === 'getToken' ? 'Bearer DUMMY' : 'LK'; } });
+test('BCS Cookie 认证规范化 Bearer，并发读取共用 5 分钟内存缓存', async () => {
+  let reads = 0, now = 1000;
+  const c = authContext([], async () => {
+    if (++reads > 1) return [];
+    return [{ name: 'Admin-Token', domain: '.bcserp.com', value: ' Bearer DUMMY ' },
+      { name: 'Limit-Key', domain: '.bcserp.com', value: 'LK' }];
+  }, { Date: class extends Date { static now() { return now; } } });
   const headers = await Promise.all([c.getAuthHeaders(), c.getAuthHeaders()]);
-  assert.equal(calls, 2); assert.equal(headers[0].Authorization, 'Bearer DUMMY');
-  c.evaluate('_tokenExpireAt = 0;'); c.callApi = async () => null;
-  await assert.rejects(c.getAuthHeaders(), /未登录/);
-  assert.equal(JSON.parse(c.storage.get('bcs_bcs_cred_cache')), '');
+  assert.equal(reads, 1);
+  assert.strictEqual(headers[0], headers[1]);
+  assert.equal(headers[0].Authorization, 'Bearer DUMMY');
+  assert.equal(headers[0]['X-Limit-Key'], 'LK');
+  now += 5 * 60 * 1000 - 1;
+  assert.strictEqual(await c.getAuthHeaders(), headers[0]);
+  now++;
+  await assert.rejects(c.getAuthHeaders(), {
+    message: '未检测到 BCS 登录状态，请先打开 https://wb.bcserp.com/productList 登录后重试',
+  });
+  assert.equal(reads, 2);
+  assert.equal(c.storage.size, 0);
 });
 
-test('HTTP 200 + code401 刷新一次，最终失败清凭证；独立统计 401 与 429', async () => {
-  let tokenCalls = 0;
-  const c = authContext([{ code: 401 }, { code: 429 }, { code: 429 }, { code: 200 }], {
-    IS_SELLER_HOST: false, callApi: async method => method === 'getToken' ? 'DUMMY' + (++tokenCalls) : 'LK',
-  });
+test('HTTP 401 时重读 Cookie，独立统计 401 与 429 重试次数', async () => {
+  let reads = 0;
+  const c = authContext([r => r.onload({ status: 401, responseText: '' }), { code: 429 }, { code: 429 }, { code: 200 }],
+    async () => [{ name: 'Admin-Token', domain: 'wb.bcserp.com', value: 'DUMMY' + (++reads) }]);
   const result = await c.bcsApiCall('/test');
-  assert.equal(result.code, 200); assert.equal(c.requests.length, 4); assert.equal(tokenCalls, 2);
-  const expired = authContext([{ code: 401 }, { code: 401 }], {
-    IS_SELLER_HOST: false, callApi: async () => 'DUMMY',
+  assert.equal(result.code, 200);
+  assert.equal(reads, 2);
+  assert.deepEqual(c.requests.map(r => r.headers.Authorization), ['Bearer DUMMY1', 'Bearer DUMMY2', 'Bearer DUMMY2', 'Bearer DUMMY2']);
+});
+
+test('业务 code 401 重读后仍失败时只重试一次，清凭证并提示重新登录', async () => {
+  let reads = 0;
+  const expired = authContext([{ code: 401 }, { code: 401 }],
+    async () => [{ name: 'Admin-Token', domain: 'wb.bcserp.com', value: 'DUMMY' + (++reads) }]);
+  await assert.rejects(expired.bcsApiCall('/test'), {
+    message: 'BCS 登录已过期，请前往 https://wb.bcserp.com/productList 重新登录',
   });
-  await assert.rejects(expired.bcsApiCall('/test'), /认证失败/);
-  assert.equal(JSON.parse(expired.storage.get('bcs_bcs_cred_cache')), '');
+  assert.equal(reads, 2);
+  assert.deepEqual(expired.requests.map(r => r.headers.Authorization), ['Bearer DUMMY1', 'Bearer DUMMY2']);
+  assert.equal((await expired.getAuthHeaders()).Authorization, 'Bearer DUMMY3');
 });
 
 test('POST 超时/断网/5xx/无效响应结果未知且不重发；非 2xx 不当作成功', async () => {
@@ -351,8 +621,7 @@ test('不同类型 nmId 不重复添加', () => {
   assert.equal(c.addToList([{ nmId: 12345 }]).added, 0);
 });
 
-test('直上路径及根参数与官方 1.5.8 一致（包括模板字段）', requiresPlugin, async () => {
-  const official = officialWb(['direct', 'template']);
+test('直上路径和请求根参数保留模板字段', async () => {
   let actual;
   const c = shelver({ bcsApiCall: async (url, options) => {
     assert.equal(url, '/system/wbCollection/wb/new');
@@ -361,15 +630,20 @@ test('直上路径及根参数与官方 1.5.8 一致（包括模板字段）', r
     return { code: 200 };
   } });
   await c.batchShelve([item()]);
-  const selected = JSON.parse(actual.shop).map(s => ({ ...s, checked: true }));
-  const options = { ...config().settings, brandMode: 0 };
-  const expected = official.DO(selected, options, clone(actual.shopDatas));
-  official.Tc(expected, options);
-  assert.deepEqual(clone(actual), clone(expected));
+  const { shop, shopDatas, ...fields } = clone(actual);
+  assert.equal(JSON.parse(shop)[0].id, 2);
+  assert.equal(shopDatas[0].vendorCode, 'BCS-QAAA-12345');
+  assert.equal(JSON.parse(shopDatas[0].wbDetail).sizes[0].price, '500.00');
+  assert.deepEqual(fields, {
+    offerDIY: '', brandStatus: false, oModel: true, status: '1', collectionType: '0',
+    offerUrl: 'https://www.wildberries.ru/catalog/12345/detail.aspx',
+    mode: 1, mergeCards: 1, carryBrand: 1, customBrand: null, titleSuffix: null,
+    vendorCodePrefix: null, aiRewrite: false, aiRetouch: false, aiRetouchTemplateId: null,
+    imgUploadMode: 0, removeBrandText: false,
+  });
 });
 
 test('直上与修改均携带商品图片和视频', async () => {
-  const official = hasOfficialPlugin ? officialWb(['description', 'collectBox', 'template']) : null;
   const requests = [];
   const c = shelver({ bcsApiCall: async (url, options) => {
     requests.push({ url, method: options.method, data: clone(options.data) });
@@ -407,16 +681,16 @@ test('直上与修改均携带商品图片和视频', async () => {
     assert.equal(row.videos, video);
     assert.equal(row.images.split(';').length, 12);
     assert.equal(data.videos, video);
-    assert.equal(JSON.parse(data.variant)[0].videos, video);
+    const [variant] = JSON.parse(data.variant);
+    assert.equal(variant.videos, video);
     assert.equal(data.images, row.images);
-    if (official) {
-      const expected = official.V_(
-        [{ ...row, nmId: product.nmId }], JSON.parse(original.shop)
-      );
-      official.Tc(expected, { ...cfg.settings, brandMode: 0 });
-      expected.offerUrl = row.offerUrl;
-      assert.deepEqual(data, clone(expected));
-    }
+    assert.equal(data.offerUrl, row.offerUrl);
+    assert.equal(data.shop, original.shop);
+    assert.equal(data.mode, 0);
+    assert.equal(data.collectType, '0');
+    assert.deepEqual(variant.sizes, JSON.parse(data.sizes));
+    assert.deepEqual(variant.chars, JSON.parse(data.chars));
+    assert.deepEqual(JSON.parse(data.scopeConfig), { fieldScope: { name: 'variant', description: 'common' }, charScope: {} });
   }
 });
 
@@ -517,6 +791,7 @@ test('跨店补上架保留库存 0、源商品链接和视频，按设置清空
   const c = context(['src/30-config.js', 'src/45-api-wb.js', 'src-sync/24-shelve-new.js'], {
     photoUrls: card => card.photos.map(p => p.big), dimsOf: card => card.dimensions,
   });
+  c.evaluate('userConfig = loadConfig()');
   const srcCard = { nmID: 12345, title: 'Товар', subjectID: 1, brand: 'SOURCE BRAND',
     photos: [{ big: 'https://example.invalid/photo.webp' }], dimensions: { length: 14, width: 7, height: 3, weightBrutto: 0.12 } };
   const opts = { srcCard, cardInfo: item().wbCardInfo, shopId: 1, warehouseId: 11,
@@ -532,7 +807,6 @@ test('跨店补上架保留库存 0、源商品链接和视频，按设置清空
   assert.equal(body.shopDatas[0].videos, '');
   opts.cardInfo.media.has_video = true;
   const video = 'https://videonme-basket-09.wbbasket.ru/vol105/part1/12345/mp4/360p/1.mp4';
-  if (hasOfficialPlugin) assert.equal(officialWb(['media']).bb(srcCard.nmID, opts.cardInfo), video);
   const [row] = c.buildShelveBody(opts).shopDatas;
   assert.equal(row.video, video);
   assert.equal(row.videos, video);
@@ -545,6 +819,7 @@ test('跨店补上架写前查重：已存在不提交、查重失败不提交�
     normText: value => String(value || '').trim(), wbSleep: async () => {},
     wbFindCardByVc: async () => ({ ok: true, card: { nmID: 54321 } }),
   });
+  c.evaluate('userConfig = loadConfig()');
   const source = { nmID: 12345, title: 'Товар', subjectID: 1, description: 'Новый./& ' + 'x'.repeat(2400),
     photos: [{ big: 'https://example.invalid/photo.webp' }], dimensions: { length: 14, width: 7, height: 3, weightBrutto: 0.12 } };
   const cfg = { vendorCode: item().vendorCode, price: 80, quantity: 0, warehouseId: 11 };

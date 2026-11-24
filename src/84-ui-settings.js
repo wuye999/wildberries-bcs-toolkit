@@ -57,6 +57,20 @@
 
   // ---- 店铺列表渲染（默认全选 + 默认莫斯科仓库 + 库存999）----
 
+  function renderShopMessage(body, message, offerLogin) {
+    const notice = document.createElement('div');
+    notice.className = 'bcs-empty';
+    notice.textContent = message;
+    if (offerLogin) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = '打开 BCS 登录页';
+      button.onclick = openBcsLogin;
+      notice.append(' ', button);
+    }
+    body.replaceChildren(notice);
+  }
+
   async function renderShopList(forceRefresh = false) {
     const body = document.getElementById('bcs-shop-body');
     if (!body) return;
@@ -70,7 +84,7 @@
       }
       const shops = shopsCache;
       if (!shops || !shops.length) {
-        body.innerHTML = '<div class="bcs-empty">未绑定店铺，请先在 BCS 插件中绑定店铺</div>';
+        renderShopMessage(body, '未绑定店铺，请登录 BCS 网站并绑定店铺。', true);
         return;
       }
 
@@ -221,7 +235,7 @@
         await new Promise(r => setTimeout(r, 50));
       }
     } catch (e) {
-      body.innerHTML = `<div class="bcs-empty">加载失败: ${e.message}</div>`;
+      renderShopMessage(body, '加载失败：' + e.message, e.message.includes(BCS_LOGIN_URL));
     }
   }
 
@@ -268,6 +282,56 @@
     if (!body) return;
     body.innerHTML = '';
 
+    const upload = document.createElement('div');
+    upload.className = 'bcs-field';
+    upload.style.cssText = 'gap:8px;flex-wrap:wrap;';
+    upload.innerHTML = `
+      <span role="status"></span>
+      <button type="button" class="bcs-btn-fetch">上传价格表 (.xlsx)</button>
+      <input type="file" accept=".xlsx" hidden>
+    `;
+    body.appendChild(upload);
+
+    const status = upload.querySelector('[role="status"]');
+    if (bossDefaultsFile) {
+      const { count, fileName, updatedAt } = bossDefaultsFile;
+      const date = new Date(updatedAt).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' });
+      status.textContent = `已加载 ${count} 条（${fileName} · ${date}）`;
+    } else {
+      status.textContent = '尚未上传价格表，请先上传 商品价格表.xlsx';
+    }
+
+    function summarizeWarnings(warnings) {
+      return warnings?.length
+        ? `\n已跳过 ${warnings.length} 行（最多显示 5 条）\n${warnings.slice(0, 5).join('\n')}`
+        : '';
+    }
+
+    const uploadButton = upload.querySelector('button');
+    const fileInput = upload.querySelector('input');
+    uploadButton.onclick = () => fileInput.click();
+    fileInput.onchange = async () => {
+      const file = fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+
+      uploadButton.disabled = true;
+      try {
+        if (!/\.xlsx$/i.test(file.name)) throw new Error('请选择 .xlsx 文件');
+        const parsed = parseBossDefaultsWorkbook(await file.arrayBuffer());
+        await saveBossDefaults(file.name, parsed);
+        refreshBossDefaults();
+
+        const message = `已加载 ${parsed.entries.length} 条价格数据`;
+        if (parsed.warnings.length) alert(message + summarizeWarnings(parsed.warnings));
+        else showToast(message);
+      } catch (error) {
+        alert('上传价格表失败：' + error.message + summarizeWarnings(error.warnings));
+      } finally {
+        uploadButton.disabled = false;
+      }
+    };
+
     // 提示文字
     const tip = document.createElement('div');
     tip.style.cssText = 'padding:6px 8px; background:#fffbe6; border:1px solid #ffe58f; border-radius:4px; margin-bottom:8px; font-size:11px; color:#8c6e2a; line-height:1.5;';
@@ -275,10 +339,7 @@
                     '包装尺寸与重量也一律取价格表。价格表查不到的商品将被阻止上架 —— 请务必选择已登记前缀码（或让商品供应商代码为已登记的 BCS-XXXX-nmId）。';
     body.appendChild(tip);
 
-    // ★ v1.5.0 商品前缀码（vendorCode 中段）：默认自动随机生成；
-    //   用户选择《前缀码对照表》中登记的 4 位前缀码后，整批待上架商品的 vendorCode 中段统一用它
-    //   （自动格式 BCS-XXXX-nmId 会被重建为 BCS-{前缀码}-nmId，便于映射侧自动归属老板商品）
-    // ★ v1.5.9 前缀码搜索框：数据量 112+ 条，按 中文名/前缀码/SKU 片段实时过滤下拉选项
+    // 按中文名、前缀码或 SKU 筛选已上传的价格表条目。
     const prefixSearchField = document.createElement('div');
     prefixSearchField.className = 'bcs-field';
     prefixSearchField.innerHTML = `
@@ -291,11 +352,7 @@
     prefixField.className = 'bcs-field';
     prefixField.innerHTML = `
       <label>商品前缀码：</label>
-      <select id="bcs-prefix-code">
-        <option value="">自动随机生成</option>
-        ${PREFIX_CODES.map(p => `<option value="${p.code}">${p.code} - ${p.name}</option>`).join('')}
-        <option value="__custom__">自定义…</option>
-      </select>
+      <select id="bcs-prefix-code"></select>
       <input type="text" id="bcs-prefix-code-input" maxlength="4" placeholder="4位大写字母"
              style="display:none;width:90px;margin-left:6px;flex:0 0 90px;">
     `;
@@ -341,8 +398,6 @@
       }
       updatePrefixWarn();
     }
-    syncPrefixSelect();
-
     // ★ v1.5.9 前缀码下拉搜索过滤：按 中文名/前缀码/SKU 片段（大小写不敏感包含匹配）重建登记码 options。
     //   常驻项「自动随机生成」(value="") 与「自定义…」(value="__custom__") 始终保留；
     //   过滤只改可见选项，不改 userConfig.prefixCode 与 onchange/applyPrefixCode 应用逻辑。
@@ -358,19 +413,20 @@
       // 当前已选登记前缀码不在过滤结果中时临时插入该项，保持显示与配置一致（避免误显示为"自动随机生成"）
       const cur = userConfig.prefixCode || '';
       const needCur = cur && isRegisteredPrefixCode(cur) && !list.some(p => p.code === cur);
-      const opts = ['<option value="">自动随机生成</option>']
-        .concat(list.map(p => `<option value="${p.code}">${p.code} - ${p.name}</option>`));
+      const opts = [new Option('自动随机生成', ''), ...list.map(p => new Option(getPrefixCodeLabel(p.code), p.code))];
       if (needCur) {
-        const cp = PREFIX_CODES.find(p => p.code === cur);
-        opts.push(`<option value="${cp.code}">${cp.code} - ${cp.name}</option>`);
+        opts.push(new Option(getPrefixCodeLabel(cur), cur));
       }
-      if (!list.length && !needCur) {
-        opts.push('<option value="__none__" disabled>（无匹配，请修改或清空搜索词）</option>');
+      if (q && !list.length && !needCur) {
+        const empty = new Option('（无匹配，请修改或清空搜索词）', '__none__');
+        empty.disabled = true;
+        opts.push(empty);
       }
-      opts.push('<option value="__custom__">自定义…</option>');
-      prefixSelect.innerHTML = opts.join('');
+      opts.push(new Option('自定义…', '__custom__'));
+      prefixSelect.replaceChildren(...opts);
       syncPrefixSelect();
     }
+    renderPrefixOptions('');
     prefixSearch.oninput = () => renderPrefixOptions(prefixSearch.value);
 
     // 应用前缀码：保存配置 + 整批重建「自动格式」vendorCode + 轻量刷新表格

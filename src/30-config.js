@@ -1,12 +1,9 @@
   // ============================================================
   // 2. 用户配置 + 待上架列表
-  // ★ v1.8.0 存储层切换：localStorage（按域名隔离）→ GM 存储（Tampermonkey 跨域共享），
-  //   www.wildberries.ru 与 seller.wildberries.ru 共用同一份配置/待上架列表/已上架缓存。
-  //   首次运行自动迁移 localStorage 旧数据（仅一次，bcs_gm_migrated_v1 标记；旧数据保留不清兜底）。
+  // 批量上架与跨店同步共用 chrome.storage.local。
   // ============================================================
   const STORAGE_KEY = 'bcs_batch_v131_settings';
   const PENDING_KEY = 'bcs_batch_v131_pending';
-  const GM_MIGRATED_KEY = 'bcs_gm_migrated_v1';
 
   // ============================================================
   // ★ v1.9.0 上架价倍数（上架价 = 价格表最低售价 × 店铺倍数）
@@ -30,7 +27,7 @@
     return n;
   }
 
-  // GM 存储 JSON 封装（GM_getValue/GM_setValue 在 Tampermonkey 沙箱同步可用）
+  // 通过扩展内存映射同步读取 JSON 配置。
   function gmLoad(key, fallback) {
     try {
       const raw = GM_getValue(key, '');
@@ -39,27 +36,8 @@
   }
   function gmSave(key, value) {
     try { GM_setValue(key, JSON.stringify(value)); return true; }
-    catch (e) { log.error('GM 存储写入失败（' + key + '）:', e && e.message); return false; }
+    catch (e) { log.error('扩展存储写入失败（' + key + '）:', e && e.message); return false; }
   }
-
-  // 一次性迁移：localStorage（www 域旧数据）→ GM。三个 key 硬编码（60-listed 在本模块之后加载，常量不可引用）
-  function migrateLocalStorageToGm() {
-    if (GM_getValue(GM_MIGRATED_KEY, '')) return;
-    const keys = ['bcs_batch_v131_settings', 'bcs_batch_v131_pending', 'bcs_listed_nmids_v1'];
-    let migrated = 0;
-    for (const k of keys) {
-      try {
-        const raw = localStorage.getItem(k);
-        if (raw && !GM_getValue(k, '')) {   // localStorage 有值且 GM 为空才迁入（GM 已有值时以 GM 为准）
-          GM_setValue(k, raw);
-          migrated++;
-        }
-      } catch (e) { /* ignore */ }
-    }
-    GM_setValue(GM_MIGRATED_KEY, '1');
-    if (migrated) log.info('已迁移 localStorage 旧数据到 GM 存储:', migrated, '项');
-  }
-  migrateLocalStorageToGm();
 
   const DEFAULTS = {
     selectedShopIds: [],
@@ -106,9 +84,9 @@
     gmSave(STORAGE_KEY, cfg);
   }
 
-  let userConfig = loadConfig();
+  let userConfig;
 
-  // ---- 待上架列表（跨域跨页累积，★ v1.8.0 GM 存储）----
+  // ---- 待上架列表 ----
   function loadPending() {
     const list = gmLoad(PENDING_KEY, []);
     // ★ v1.9.0：清掉旧版本遗留的「可编辑价格/尺寸」字段（幂等；价格与包装一律取价格表，不再存在逐行自定义）
@@ -128,7 +106,7 @@
   function savePending(list) {
     try {
       const json = JSON.stringify(list);
-      // 容量提示：GM 存储无硬配额，超大列表影响读写性能
+      // 大列表会占用扩展存储，并影响读写性能。
       if (json.length > 4 * 1024 * 1024) {
         log.warn(`待上架列表数据较大（${(json.length / 1024 / 1024).toFixed(2)}MB），建议减少待上架商品数量`);
       }
@@ -138,7 +116,7 @@
       showToast('保存失败：数据过大，建议减少待上架商品数量', 5000);
     }
   }
-  let pendingList = loadPending();
+  let pendingList;
 
   // 新建待上架商品对象（字段定义集中在此，便于维护）
   // ★ v1.9.0：取消 price/length/width/height/weight/__manual —— 上架价 = 价格表最低售价 × 店铺倍数，

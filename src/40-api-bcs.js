@@ -1,71 +1,37 @@
   // ============================================================
-  // 3. BCS 云端API直连（通过 GM_xmlhttpRequest 绕过 CORS）
+  // 3. BCS 云端 API
   // ============================================================
   const BCS_API_BASE = 'https://wb.bcserp.com/prod-api';
+  const BCS_LOGIN_URL = 'https://wb.bcserp.com/productList';
+  let bcsAuthCache;
+  let bcsAuthPending;
 
-  // 获取认证 header（从插件桥接获取 token 和 limitKey）
-  let _tokenCache = null;
-  let _limitKeyCache = null;
-  let _tokenExpireAt = 0;
-
-  // ★ v1.8.0 BCS 凭证跨域缓存（GM 存储）：
-  //   BCS 插件 content_scripts 只匹配 www.wildberries.ru，seller.wildberries.ru 上无 postMessage 桥接。
-  //   www 页桥接取到凭证后写入 GM（Tampermonkey 跨域共享）；seller 页桥接不可用时读缓存兜底。
-  const CRED_CACHE_KEY = 'bcs_bcs_cred_cache';
-  function clearCredCache() {
-    _tokenCache = null;
-    _limitKeyCache = null;
-    _tokenExpireAt = 0;
-    gmSave(CRED_CACHE_KEY, '');
-  }
-
-  let _authInflight = null;
-  function normalizeAuthToken(value) {
-    return typeof value === 'string' ? value.trim().replace(/^Bearer\s+/i, '').trim() : '';
+  async function openBcsLogin() {
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'EXT_OPEN_BCS_LOGIN' });
+      if (!result?.ok) throw new Error(result?.error || '后台未响应');
+    } catch (error) {
+      showToast(`打开 BCS 登录页失败，请前往 ${BCS_LOGIN_URL} 登录`, 6000);
+    }
   }
 
   async function getAuthHeaders() {
-    if (!_tokenCache || Date.now() >= _tokenExpireAt) {
-      if (!_authInflight) {
-        _authInflight = (async () => {
-          let got = false;
-          if (!IS_SELLER_HOST) {
-            try {
-              const [t, lk] = await Promise.all([callApi('getToken'), callApi('getLimitKey')]);
-              const token = normalizeAuthToken(t);
-              // 明确返回空代表已退出登录；不可复用旧账号的 GM 凭证。
-              if (!token) {
-                clearCredCache();
-                throw Object.assign(new Error('BCS 插件未登录，请先登录后重试'), { authAbsent: true });
-              }
-              _tokenCache = token;
-              _limitKeyCache = typeof lk === 'string' ? lk.trim() : '';
-              _tokenExpireAt = Date.now() + 5 * 60 * 1000;
-              got = true;
-              gmSave(CRED_CACHE_KEY, { token, limitKey: _limitKeyCache, ts: Date.now() });
-            } catch (error) {
-              if (error.authAbsent) throw error;
-              // 桥接未加载时仍可使用跨域缓存；明确未登录的情况已在上面阻止。
-            }
-          }
-          if (!got) {
-            const cached = gmLoad(CRED_CACHE_KEY, null);
-            const token = normalizeAuthToken(cached?.token);
-            if (!token) throw new Error('获取BCS认证失败：请先打开任一 www.wildberries.ru 页面，确认插件已登录并完成认证。');
-            _tokenCache = token;
-            _limitKeyCache = typeof cached.limitKey === 'string' ? cached.limitKey.trim() : '';
-            _tokenExpireAt = Date.now() + 60 * 1000;
-          }
-        })();
-      }
-      const task = _authInflight;
-      try { await task; }
-      finally { if (_authInflight === task) _authInflight = null; }
-    }
-    const headers = { 'Content-Type': 'application/json;charset=utf-8', 'Accept': '*/*' };
-    if (_tokenCache) headers.Authorization = 'Bearer ' + _tokenCache;
-    if (_limitKeyCache) headers['X-Limit-Key'] = _limitKeyCache;
-    return headers;
+    if (bcsAuthCache && Date.now() < bcsAuthCache.expiresAt) return bcsAuthCache.headers;
+    bcsAuthCache = null;
+    bcsAuthPending ??= chrome.runtime.sendMessage({ type: 'EXT_GET_BCS_AUTH' }).then(auth => {
+      if (auth?.error) throw new Error('读取 BCS 登录状态失败：' + auth.error);
+      const token = auth?.token?.trim().replace(/^Bearer(?:\s+|$)/i, '').trim();
+      if (!token) throw new Error(`未检测到 BCS 登录状态，请先打开 ${BCS_LOGIN_URL} 登录后重试`);
+      const headers = {
+        'Content-Type': 'application/json;charset=utf-8',
+        'Accept': '*/*',
+        'Authorization': 'Bearer ' + token,
+      };
+      if (auth.limitKey?.trim()) headers['X-Limit-Key'] = auth.limitKey.trim();
+      bcsAuthCache = { headers, expiresAt: Date.now() + 5 * 60 * 1000 };
+      return headers;
+    }).finally(() => { bcsAuthPending = null; });
+    return bcsAuthPending;
   }
 
   // 通用请求：401（含 HTTP 200 + code:401）刷新认证一次，429 最多重试两次。
@@ -86,17 +52,17 @@
           onload: resolve,
           onerror: () => reject(failure('BCS API网络请求失败', writing)),
           ontimeout: () => reject(failure('BCS API请求超时', writing)),
-          onabort: () => reject(failure('BCS API请求已中止', writing)),
         });
       });
       let data = null;
       try { data = JSON.parse(resp.responseText); } catch (e) { /* 下方按状态码处理 */ }
       const httpOk = resp.status >= 200 && resp.status < 300;
-      const authFailed = resp.status === 401 || (httpOk && Number(data?.code) === 401);
+      const authFailed = resp.status === 401 || Number(data?.code) === 401;
       if (authFailed) {
-        clearCredCache();
+        // 并发请求可能已刷新凭证，只丢弃本次请求实际使用的版本。
+        if (bcsAuthCache?.headers === headers) bcsAuthCache = null;
         if (authRetries++ < 1) continue;
-        throw failure('BCS认证失败(401)：请重新登录插件，并在 www 页面刷新认证缓存', false);
+        throw failure(`BCS 登录已过期，请前往 ${BCS_LOGIN_URL} 重新登录`, false);
       }
       if (resp.status === 429 || (httpOk && Number(data?.code) === 429)) {
         if (rateRetries++ < 2) { await new Promise(r => setTimeout(r, 3000)); continue; }

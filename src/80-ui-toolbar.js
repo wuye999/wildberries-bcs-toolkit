@@ -15,7 +15,6 @@
     toolbar.innerHTML = `
       <span id="bcs-tb-count">已选 0</span>
       <button id="bcs-tb-cur" class="bcs-tb-cur-btn" style="display:none;">＋当前商品</button>
-      <button id="bcs-tb-seller" class="bcs-btn-add" style="display:none;">添加选中商品</button>
       <button id="bcs-tb-add" class="bcs-btn-add">添加到待上架列表</button>
       <button id="bcs-tb-panel">待上架列表<span class="bcs-badge" id="bcs-tb-badge">0</span></button>
       <button id="bcs-tb-selectall">全选</button>
@@ -25,7 +24,6 @@
     document.body.appendChild(toolbar);
 
     document.getElementById('bcs-tb-cur').onclick = onAddCurrentProduct;
-    document.getElementById('bcs-tb-seller').onclick = onAddSellerSelected;   // ★ v1.8.0 卖家后台
     document.getElementById('bcs-tb-add').onclick = onAddToPending;
     document.getElementById('bcs-tb-panel').onclick = openPanel;
     document.getElementById('bcs-tb-selectall').onclick = () => {
@@ -42,48 +40,13 @@
 
     updateToolbarCount();
     updateCurrentProductButton();
-    updateSellerButton();   // ★ v1.8.0 卖家后台按钮显隐
-  }
-
-  // ★ v1.8.0「添加选中商品」按钮显隐：仅卖家后台「所有商品」等 /card-main/ 页面显示
-  function updateSellerButton() {
-    const btn = document.getElementById('bcs-tb-seller');
-    if (!btn) return;
-    btn.style.display = isSellerGoodsPage() ? '' : 'none';
-  }
-
-  // ★ v1.8.0 卖家后台：把原生勾选框选中的行加入待上架列表
-  // 数据源 = 行内 DOM（nmId/标题/卖家编码），detail 由 autoFetchItems → fetchItemsBatch 走 card.json 合成
-  function onAddSellerSelected() {
-    const rows = getSellerSelectedItems();
-    if (!rows.length) {
-      alert('请先在商品列表中勾选要上架的商品\n（使用页面自带的行首勾选框；若刚勾选请稍候重试）');
-      return;
-    }
-
-    // 与「＋当前商品」一致：不清空用户选择（原生勾选由下方成功后主动取消）
-    const res = addItemsAndFetch(rows, { clearSelection: false, label: '卖家商品' });
-
-    // 取消已成功添加行的原生勾选（React 受控：程序化 click；失败降级为保留勾选）
-    if (res.added > 0) {
-      const addedIds = new Set(res.newItems.map(it => String(it.nmId)));
-      rows.forEach(r => {
-        if (!addedIds.has(String(r.nmId))) return;
-        const cb = r.el.querySelector('td[data-testid$="_selection"] input[type=checkbox]');
-        if (cb && cb.checked) {
-          try { cb.click(); } catch (e) { log.warn('取消原生勾选失败:', e && e.message); }
-        }
-      });
-    }
   }
 
   // ★ v1.7.4「＋当前商品」按钮显隐：仅详情页（URL 含 /catalog/{nmId}）显示，搜索页隐藏
   // 详情页内切换商品是 SPA 跳转不重载页面，故每次调用都实时读 URL 与 h1
-  // ★ v1.8.0：卖家后台隐藏（ sellers 页无 /catalog/ 路径，本就取不到 product；显式早退防漂移）
   function updateCurrentProductButton() {
     const btn = document.getElementById('bcs-tb-cur');
     if (!btn) return;
-    if (IS_SELLER_HOST) { btn.style.display = 'none'; return; }
     const product = isDetailPage() ? getCurrentProduct() : null;
     if (product) {
       btn.style.display = '';
@@ -95,18 +58,7 @@
 
   function updateToolbarCount() {
     const countEl = document.getElementById('bcs-tb-count');
-    if (countEl) {
-      if (IS_SELLER_HOST) {
-        // ★ v1.8.0 卖家后台：统计原生勾选框选中数
-        let n = 0;
-        document.querySelectorAll('tr[data-testid^="all-goods-table-row-"] td[data-testid$="_selection"] input[type=checkbox]').forEach(cb => {
-          if (cb.checked) n++;
-        });
-        countEl.textContent = `已选 ${n}`;
-      } else {
-        countEl.textContent = `已选 ${selectedItems.size}`;
-      }
-    }
+    if (countEl) countEl.textContent = `已选 ${selectedItems.size}`;
     const badge = document.getElementById('bcs-tb-badge');
     if (badge) badge.textContent = pendingList.length;
   }
@@ -343,8 +295,6 @@
 
   // ---- 复选框注入 ----
   function refreshCheckboxes() {
-    // ★ v1.8.0 卖家后台：复用页面自带勾选框，不注入、不扫 www 卡片
-    if (IS_SELLER_HOST) return;
     // 详情页也注入复选框（用于推荐列表的商品选择）
     // 排除当前详情页主商品（h1 所在区域的商品）
     // ★ v1.7.4：主商品改由工具栏「＋当前商品」按钮加入（见 56-products.getCurrentProduct），
