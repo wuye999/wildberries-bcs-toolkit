@@ -12,10 +12,13 @@
     } catch (error) {
       log.error('上架准备失败:', error);
       alert(error.message || String(error));
-      showProgress(error.message || String(error), true);
+      showProgress(error.message || String(error), true, true);
     } finally {
       batchPreparing = false;
-      if (startBtn) { startBtn.disabled = false; startBtn.textContent = '一键全部上架'; }
+      if (startBtn) {
+        startBtn.disabled = false;
+        startBtn.textContent = typeof getStartButtonLabel === 'function' ? getStartButtonLabel() : '一键全部上架';
+      }
     }
   }
 
@@ -201,19 +204,21 @@
     } catch (e) {
       log.error('批量上架异常:', e);
       alert('批量上架异常：' + (e.message || e));
-      showProgress('异常：' + (e.message || e), true);
+      showProgress('异常：' + (e.message || e), true, true);
     } finally {
-      if (btn) btn.disabled = false;
-      if (btn) btn.textContent = '一键全部上架';
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = typeof getStartButtonLabel === 'function' ? getStartButtonLabel() : '一键全部上架';
+      }
     }
   }
 
-  function showProgress(text, isFinal = false) {
+  function showProgress(text, isFinal = false, isError = false) {
     const el = document.getElementById('bcs-progress');
     if (!el) return;
     el.style.display = 'block';
     el.textContent = text;
-    el.style.background = isFinal ? '#d4edda' : '#fff3cd';
-    el.style.color = isFinal ? '#155724' : '#856404';
+    el.classList.toggle('is-done', isFinal && !isError);
+    el.classList.toggle('is-error', isError);
   }
 

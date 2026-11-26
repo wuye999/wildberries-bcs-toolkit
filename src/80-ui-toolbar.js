@@ -1,9 +1,15 @@
   // ============================================================
-  // 11. 工具栏 + 待上架列表面板 UI
+  // 11. 工具栏 + 局部行更新
   // ============================================================
   let selectedItems = new Set();   // 当前页面选中的 nmId
   let panelEl = null;
   let panelMask = null;
+
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
 
   function injectToolbar() {
     // 幂等检查，避免重复注入
@@ -13,13 +19,18 @@
     const toolbar = document.createElement('div');
     toolbar.className = 'bcs-toolbar';
     toolbar.innerHTML = `
-      <span id="bcs-tb-count">已选 0</span>
-      <button id="bcs-tb-cur" class="bcs-tb-cur-btn" style="display:none;">＋当前商品</button>
-      <button id="bcs-tb-add" class="bcs-btn-add">添加到待上架列表</button>
-      <button id="bcs-tb-panel">待上架列表<span class="bcs-badge" id="bcs-tb-badge">0</span></button>
-      <button id="bcs-tb-selectall">全选</button>
-      <button id="bcs-tb-clear">清空选择</button>
-      <button id="bcs-tb-listed" class="bcs-tb-listed-btn">同步已上架</button>
+      <span id="bcs-tb-count" class="bcs-tb-count">已选 0</span>
+      <button type="button" id="bcs-tb-selectall" class="bcs-tb-ghost" title="勾选当前页所有商品">全选</button>
+      <button type="button" id="bcs-tb-clear" class="bcs-tb-ghost" title="取消当前页勾选">清空</button>
+      <button type="button" id="bcs-tb-add" class="bcs-btn-add">加入待上架</button>
+      <button type="button" id="bcs-tb-cur" class="bcs-tb-cur-btn" style="display:none;">＋当前商品</button>
+      <span class="bcs-tb-divider"></span>
+      <button type="button" id="bcs-tb-panel" class="bcs-btn-panel">
+        <span>待上架列表</span>
+        <span class="bcs-badge" id="bcs-tb-badge">0</span>
+      </button>
+      <span class="bcs-tb-divider"></span>
+      <button type="button" id="bcs-tb-listed" class="bcs-tb-listed-btn" title="拉取 BCS 已上架商品并在页面打标">同步已上架</button>
     `;
     document.body.appendChild(toolbar);
 
@@ -58,9 +69,19 @@
 
   function updateToolbarCount() {
     const countEl = document.getElementById('bcs-tb-count');
-    if (countEl) countEl.textContent = `已选 ${selectedItems.size}`;
+    if (countEl) {
+      countEl.textContent = `已选 ${selectedItems.size}`;
+      countEl.classList.toggle('has-sel', selectedItems.size > 0);
+    }
+    const addBtn = document.getElementById('bcs-tb-add');
+    if (addBtn) {
+      addBtn.classList.toggle('active', selectedItems.size > 0);
+    }
     const badge = document.getElementById('bcs-tb-badge');
-    if (badge) badge.textContent = pendingList.length;
+    if (badge) {
+      badge.textContent = String(pendingList.length);
+      badge.classList.toggle('has-items', pendingList.length > 0);
+    }
   }
 
   // 全局抓取队列状态（防止并发抓取冲突）
@@ -74,7 +95,7 @@
       toAdd = pageItems.filter(it => selectedItems.has(it.nmId));
     }
     if (toAdd.length === 0) {
-      alert('请先勾选要上架的商品\n（详情页主商品不在推荐列表内，请用工具栏「＋当前商品」按钮加入）');
+      showToast('请先勾选要上架的商品（详情页主商品请点「＋当前商品」）', 4000);
       return;
     }
 
@@ -115,24 +136,18 @@
   }
 
   // ★ v1.7.4 抽取公共流程：加入列表 → 刷新 UI → 提示 → 自动抓取（勾选流程与「＋当前商品」共用）
-  //   opts.clearSelection：是否清空页面已勾选商品（勾选流程 true；详情页按钮 false）
-  //   opts.label：提示文案前缀（如「当前商品 1590343793」）
-  //   opts.warn：附加警告文案（合并进同一条 toast，避免被后续 toast 覆盖而丢失）
   function addItemsAndFetch(toAdd, opts = {}) {
     const { added, newItems } = addToList(toAdd);
     const skipped = toAdd.length - added;
 
-    // 清空当前页选择
     if (opts.clearSelection) {
       selectedItems.clear();
       refreshCheckboxes();
     }
     updateToolbarCount();
 
-    // 如果面板已打开，刷新列表
     if (panelEl) renderPendingList();
 
-    // 非阻塞提示
     let msg = opts.label ? `${opts.label}：` : '';
     msg += `已添加 ${added} 个商品`;
     if (skipped > 0) msg += `（${skipped} 个已存在跳过）`;
@@ -140,36 +155,28 @@
     if (opts.warn) msg += ` ⚠️ ${opts.warn}`;
     showToast(msg, opts.warn ? 6000 : 3000);
 
-    // 自动抓取新增商品的详情
     if (newItems.length > 0) {
       autoFetchItems(newItems);
     }
     return { added, skipped, newItems };
   }
 
-  // 非阻塞提示（右上角浮层，3秒后消失）
+  // 非阻塞提示（右上角浮层）
   function showToast(text, duration = 3000) {
+    injectStyles();
     let toast = document.getElementById('bcs-toast');
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'bcs-toast';
-      toast.style.cssText = `
-        position: fixed; top: 20px; right: 20px; z-index: 9999999;
-        background: #333; color: #fff; padding: 10px 16px;
-        border-radius: 6px; font-size: 13px; max-width: 320px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-        transition: opacity 0.3s;
-      `;
       document.body.appendChild(toast);
     }
     toast.textContent = text;
-    toast.style.opacity = '1';
+    toast.classList.add('show');
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, duration);
+    toast._timer = setTimeout(() => { toast.classList.remove('show'); }, duration);
   }
 
-  // 自动抓取一批商品的详情（★ v1.4.1：detail 合并请求 + 失败不重试 + 批次间随机抖动限流）
+  // 自动抓取一批商品的详情
   async function autoFetchItems(items) {
     if (fetchingQueue) {
       log.warn('已有抓取任务进行中，跳过本次自动抓取');
@@ -201,93 +208,25 @@
     const row = panelEl.querySelector(`tr[data-nm-id="${item.nmId}"]`);
     if (!row) return;
 
-    // 标记为已抓取（背景变绿）
-    row.classList.add('row-fetched-true');
-    paintProductThumbnail(row.querySelector('.col-img'), item);
+    row.classList.toggle('row-unfetched', item.fetched !== true);
+    paintProductCell(row.querySelector('.col-product'), item);
 
-    // ★ v1.7.0 合成 detail 角标就地同步（重渲染路径在 renderPendingList 的序号列生成）
-    if (item.detailSource === 'synthetic') {
-      const idxCell = row.querySelector('.col-idx');
-      if (idxCell && !idxCell.querySelector('.bcs-syn-badge')) {
-        const badge = document.createElement('span');
-        badge.className = 'bcs-syn-badge';
-        badge.style.cssText = 'display:inline-block;margin-left:4px;padding:0 4px;font-size:10px;line-height:16px;background:#e6a23c;color:#fff;border-radius:3px;vertical-align:middle;cursor:help;';
-        badge.title = 'detail 抓取失败，使用 card.json 合成数据（规格名占位、无实时现价；售价/尺寸/重量用生效值）';
-        badge.textContent = '合';
-        idxCell.appendChild(badge);
-      }
-    }
-
-    // 更新供应商代码输入框（强制更新，确保抓取到的值显示出来；placeholder 同步前缀码状态）
     const codeInput = row.querySelector('.col-code input');
     if (codeInput) {
       codeInput.placeholder = `自动(${userConfig.prefixCode || '随机'})`;
       if (item.vendorCode) {
         codeInput.value = item.vendorCode;
       }
-    } else {
-      log.debug(`更新行 ${item.nmId} 供应商代码失败: codeInput=${!!codeInput}, vendorCode=${item.vendorCode}`);
     }
 
-    // 更新 SKU 列（只显示第一个变体的 nmId，标注总变体数）
-    const skuCell = row.querySelector('.col-sku');
-    if (skuCell && item.skus && item.skus.length > 0) {
-      const first = item.skus[0];
-      // 优先显示 SKU 代码（nmId）
-      let skuText = '';
-      if (first.nmId) {
-        skuText = first.nmId;
-      } else {
-        const parts = [];
-        if (first.wbSize) parts.push(first.wbSize);
-        else if (first.techSize) parts.push(first.techSize);
-        if (first.rubPrice) parts.push(`${first.rubPrice}P`);
-        skuText = parts.join(' / ') || '无';
-      }
-
-      // tooltip 显示所有变体
-      const allSkuText = item.skus.map((s, idx) => {
-        const p = [];
-        if (s.nmId) p.push(s.nmId);
-        if (s.wbSize) p.push(s.wbSize);
-        else if (s.techSize) p.push(s.techSize);
-        if (s.rubPrice) p.push(`${s.rubPrice}P`);
-        return `#${idx + 1}: ${p.join(' / ')}`;
-      }).join('\n');
-
-      skuCell.innerHTML = `<div class="sku-list" title="${allSkuText}" style="font-size:12px;color:#333;">${skuText}</div>`;
-      if (item.skus.length > 1) {
-        const cnt = document.createElement('div');
-        cnt.style.cssText = 'font-size:10px;color:#409eff;margin-top:2px;';
-        cnt.textContent = `共 ${item.skus.length} 个变体`;
-        skuCell.appendChild(cnt);
-      }
-    } else if (skuCell) {
-      skuCell.innerHTML = '<span style="color:#ccc;">无变体</span>';
-    }
-
-    // 同款多色提示
-    if (skuCell && item.colors && item.colors.length > 1) {
-      const colors = document.createElement('div');
-      colors.style.cssText = 'font-size:10px;color:#999;margin-top:2px;';
-      colors.textContent = `${item.colors.length} 色`;
-      skuCell.appendChild(colors);
-    }
-
-    // 更新现价/原价列
-    const rubCell = row.querySelector('.col-rub');
-    if (rubCell) {
-      const cur = item.currentPrice || '--';
-      const old = item.originalPrice || '--';
-      rubCell.innerHTML = `<div>${cur}</div><div style="text-decoration:line-through;color:#aaa;">${old}</div>`;
-    }
-
-    // 更新价格/包装列（★ v1.9.0：全只读，最低售价 + 按店铺倍数的上架价 + 价格表包装尺寸）
-    //   实现集中在 82-ui-panel.js 的 paintPriceCells（函数声明提升，跨模块可调），避免两处逻辑漂移
+    paintSkuCell(row.querySelector('.col-sku'), item);
+    paintRubCell(row.querySelector('.col-rub'), item);
     paintPriceCells(row, item);
+    updateListBadges();
+    updateFooterSummary();
   }
 
-  // 更新表格下方的抓取状态文字
+  // 更新列表头部的抓取状态文字
   function updateFetchStatus(text) {
     const info = document.getElementById('bcs-fetch-info');
     if (info) info.textContent = text;
@@ -295,31 +234,23 @@
 
   // ---- 复选框注入 ----
   function refreshCheckboxes() {
-    // 详情页也注入复选框（用于推荐列表的商品选择）
-    // 排除当前详情页主商品（h1 所在区域的商品）
-    // ★ v1.7.4：主商品改由工具栏「＋当前商品」按钮加入（见 56-products.getCurrentProduct），
-    //   此处保持排除——否则「全选」会把主商品混进推荐位勾选集合
     const currentNmId = (() => {
       const m = location.pathname.match(/\/catalog\/(\d+)/);
       return m ? m[1] : null;
     })();
 
     const products = getProductsOnPage();
-    let added = 0;
     products.forEach(item => {
-      // 详情页：跳过当前主商品（URL 中的 nmId）
+      // 详情页：跳过当前主商品（URL 中的 nmId），主商品改由「＋当前商品」按钮加入
       if (isDetailPage() && item.nmId === currentNmId) return;
-
       if (!item.el) return;
-      // ★ 已存在复选框：检查 nmId 是否变化（搜索页虚拟滚动会复用 DOM 节点，只更新 href）
+
+      // 检测虚拟滚动复用 DOM 节点
       const existingCb = item.el.querySelector('.bcs-checkbox');
       if (existingCb) {
-        // 如果复选框绑定的 nmId 与当前 nmId 不同，说明 DOM 节点被复用，需重建复选框
         if (existingCb.dataset.nmId !== item.nmId) {
-          // 旧 nmId 的选中状态保留在 selectedItems 中，新 nmId 按当前选中状态显示
           existingCb.remove();
         } else {
-          // nmId 一致：同步 checked 状态（清空选择后需取消勾选 UI）
           existingCb.checked = selectedItems.has(item.nmId);
           return;
         }
@@ -327,7 +258,7 @@
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'bcs-checkbox';
-      cb.dataset.nmId = item.nmId;  // ★ 记录绑定的 nmId，用于检测虚拟滚动复用
+      cb.dataset.nmId = item.nmId;
       cb.checked = selectedItems.has(item.nmId);
       cb.onchange = () => {
         if (cb.checked) selectedItems.add(item.nmId);
@@ -336,7 +267,5 @@
       };
       if (getComputedStyle(item.el).position === 'static') item.el.style.position = 'relative';
       item.el.appendChild(cb);
-      added++;
     });
   }
-

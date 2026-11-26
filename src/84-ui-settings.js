@@ -1,33 +1,57 @@
-  // ---- 上货方式设置 ----
+  // ---- 上架选项设置（紧凑单行条：方式 / 品牌 / 同款合并 / 提交间隔） ----
   function renderModeSettings() {
     const body = document.getElementById('bcs-mode-body');
     if (!body) return;
     body.innerHTML = '';
 
-    body.appendChild(createToggleGroup('方式', [
-      { label: '直上', value: true },
-      { label: '修改（存入采集箱）', value: false },
+    const strip = document.createElement('div');
+    strip.className = 'bcs-mode-strip';
+
+    strip.appendChild(createToggleGroup('上架方式', [
+      { label: '直接上架', value: true },
+      { label: '存入采集箱', value: false },
     ], userConfig.settings.directUpload, (v) => {
       userConfig.settings.directUpload = v;
       saveConfig(userConfig);
       if (panelEl) renderPendingList();
     }));
 
-    body.appendChild(createToggleGroup('品牌', [
-      { label: '携带', value: true },
+    strip.appendChild(createToggleGroup('原品牌', [
       { label: '不携带', value: false },
+      { label: '携带', value: true },
     ], userConfig.settings.carryBrand, (v) => {
       userConfig.settings.carryBrand = v;
       saveConfig(userConfig);
     }));
 
-    body.appendChild(createToggleGroup('合并', [
-      { label: '合并', value: false },
+    strip.appendChild(createToggleGroup('同款多色', [
       { label: '不合并', value: true },
+      { label: '合并', value: false },
     ], userConfig.settings.noMerge, (v) => {
       userConfig.settings.noMerge = v;
       saveConfig(userConfig);
     }));
+
+    const intervalWrap = document.createElement('div');
+    intervalWrap.className = 'bcs-interval-wrap';
+    intervalWrap.title = '不同倍数的店铺会分组提交（请求数 = 商品数 × 倍数种类数），每次请求之间等待该秒数';
+    intervalWrap.innerHTML = `
+      <label for="bcs-interval">提交间隔</label>
+      <input type="number" id="bcs-interval" value="${userConfig.intervalMs / 1000}" min="1" step="1">
+      <span>秒</span>
+    `;
+    strip.appendChild(intervalWrap);
+    body.appendChild(strip);
+
+    const intervalInput = document.getElementById('bcs-interval');
+    if (intervalInput) {
+      intervalInput.onchange = (e) => {
+        const sec = Math.max(1, Number(e.target.value) || 2);
+        e.target.value = String(sec);
+        userConfig.intervalMs = sec * 1000;
+        saveConfig(userConfig);
+      };
+    }
   }
 
   function createToggleGroup(label, options, currentValue, onChange) {
@@ -35,7 +59,7 @@
     wrap.className = 'bcs-toggle-group';
     const lbl = document.createElement('span');
     lbl.className = 'bcs-toggle-label';
-    lbl.textContent = label + '：';
+    lbl.textContent = label;
     wrap.appendChild(lbl);
     const btnWrap = document.createElement('div');
     btnWrap.className = 'bcs-toggle-btns';
@@ -55,8 +79,7 @@
     return wrap;
   }
 
-  // ---- 店铺列表渲染（默认全选 + 默认莫斯科仓库 + 库存999）----
-
+  // ---- 店铺列表渲染（默认全选 + 默认莫斯科仓库 + 库存 999 + 一键切倍数） ----
   function renderShopMessage(body, message, offerLogin) {
     const notice = document.createElement('div');
     notice.className = 'bcs-empty';
@@ -64,6 +87,8 @@
     if (offerLogin) {
       const button = document.createElement('button');
       button.type = 'button';
+      button.className = 'bcs-btn-accent';
+      button.style.marginLeft = '10px';
       button.textContent = '打开 BCS 登录页';
       button.onclick = openBcsLogin;
       notice.append(' ', button);
@@ -71,26 +96,41 @@
     body.replaceChildren(notice);
   }
 
+  function updateShopCountPill(total) {
+    const pill = document.getElementById('bcs-shop-count-pill');
+    if (!pill) return;
+    const selected = (userConfig.selectedShopIds || []).length;
+    if (!total) {
+      pill.className = 'bcs-pill bcs-pill-muted';
+      pill.textContent = '0 个店铺';
+    } else if (!selected) {
+      pill.className = 'bcs-pill bcs-pill-err';
+      pill.textContent = `未选店铺（共 ${total} 店）`;
+    } else {
+      pill.className = 'bcs-pill bcs-pill-info';
+      pill.textContent = `已选 ${selected} / ${total} 店`;
+    }
+  }
+
   async function renderShopList(forceRefresh = false) {
     const body = document.getElementById('bcs-shop-body');
     if (!body) return;
-    body.innerHTML = '<div class="bcs-empty">加载中...</div>';
+    body.innerHTML = '<div class="bcs-empty">正在加载店铺列表...</div>';
 
     try {
       if (forceRefresh || !shopsCache) {
-        // 通过云端API获取店铺列表（GM_xmlhttpRequest 直连，带缓存）
         shopsCache = await getShops(forceRefresh);
         shopsAutoSelected = false;
       }
       const shops = shopsCache;
       if (!shops || !shops.length) {
-        renderShopMessage(body, '未绑定店铺，请登录 BCS 网站并绑定店铺。', true);
+        updateShopCountPill(0);
+        renderShopMessage(body, '未绑定店铺，请先登录 BCS 网站并绑定店铺。', true);
+        updateFooterSummary();
         return;
       }
 
-      // ---- 首次加载时自动勾选全部店铺 + 库存999 + 上架倍数默认 ×2（仓库串行加载时自动选莫斯科）----
-      // ★ A6 保留原设计：自动全选 + 库存 999 兜底
-      // ★ v1.9.0：店铺配置新增 priceMultiplier（上架价 = 价格表最低售价 × 倍数），与仓库一样持久化记忆
+      // 首次加载时自动勾选全部店铺 + 库存 999 + 上架倍数默认 ×2
       if (!shopsAutoSelected) {
         for (const shop of shops) {
           if (!userConfig.selectedShopIds.includes(shop.id)) {
@@ -111,117 +151,64 @@
         shopsAutoSelected = true;
       }
 
-      // ---- 先渲染所有店铺行（仓库下拉显示"加载中"）----
-      body.innerHTML = '';
+      updateShopCountPill(shops.length);
+      updateFooterSummary();
+
+      const wrap = document.createElement('div');
+      wrap.className = 'bcs-shop-wrap';
+      wrap.innerHTML = `
+        <div class="bcs-shop-head">
+          <span></span>
+          <span>店铺名称</span>
+          <span>发货仓库</span>
+          <span style="text-align:center;">库存</span>
+          <span style="text-align:center;">上架倍数</span>
+        </div>
+      `;
+      body.replaceChildren(wrap);
+
       const rowsMap = new Map();
       for (const shop of shops) {
         const cfg = userConfig.shopConfigs[shop.id] || { warehouseId: null, quantity: 999, priceMultiplier: 2 };
         const isSelected = userConfig.selectedShopIds.includes(shop.id);
-        const curMult = normalizePriceMultiplier(cfg.priceMultiplier);   // 30-config.js
+        const curMult = normalizePriceMultiplier(cfg.priceMultiplier);
         const row = document.createElement('div');
-        row.className = 'bcs-shop-row';
+        row.className = 'bcs-shop-row' + (isSelected ? '' : ' is-unchecked');
         row.innerHTML = `
-          <input type="checkbox" data-shopid="${shop.id}" ${isSelected ? 'checked' : ''}>
-          <span class="bcs-shop-name" title="${shop.shopName}">${shop.shopName}</span>
-          <select data-shopid="${shop.id}" data-field="warehouse" title="发货仓库" ${!isSelected ? 'disabled' : ''}>
-            <option value="">${isSelected ? '加载中...' : '发货地...'}</option>
+          <input type="checkbox" data-shopid="${escHtml(shop.id)}" ${isSelected ? 'checked' : ''}>
+          <span class="bcs-shop-name" title="${escHtml(shop.shopName)}">${escHtml(shop.shopName)}</span>
+          <select data-shopid="${escHtml(shop.id)}" data-field="warehouse" title="发货仓库" ${!isSelected ? 'disabled' : ''}>
+            <option value="">${isSelected ? '加载中...' : '请选择发货仓'}</option>
           </select>
-          <input type="number" data-shopid="${shop.id}" data-field="qty" value="${cfg.quantity != null ? cfg.quantity : 999}" min="0" title="库存" ${!isSelected ? 'disabled' : ''}>
-          <select data-shopid="${shop.id}" data-field="mult" title="上架价 = 价格表最低售价 × 倍数" ${!isSelected ? 'disabled' : ''}>
-            ${PRICE_MULTIPLIERS.map(m => `<option value="${m}" ${curMult === m ? 'selected' : ''}>×${m}</option>`).join('')}
-          </select>
+          <input type="number" data-shopid="${escHtml(shop.id)}" data-field="qty" value="${cfg.quantity != null ? cfg.quantity : 999}" min="0" title="上架库存" ${!isSelected ? 'disabled' : ''}>
+          <div class="bcs-mult-group" data-field="mult" title="上架价 = 价格表最低售价 × 倍数">
+            ${PRICE_MULTIPLIERS.map(m => {
+              const cls = ['bcs-mult-btn'];
+              if (curMult === m) cls.push('active');
+              if (m === 5) cls.push('mult-high');
+              if (m >= 10) cls.push('mult-max');
+              return `<button type="button" class="${cls.join(' ')}" data-mult="${m}" ${!isSelected ? 'disabled' : ''}>×${m}</button>`;
+            }).join('')}
+          </div>
         `;
-        body.appendChild(row);
+        wrap.appendChild(row);
         rowsMap.set(shop.id, {
           row, shop, cfg,
-          whSelect: row.querySelector('select[data-field="warehouse"]'),
-          qtyInput: row.querySelector('input[type="number"]'),
-          multSelect: row.querySelector('select[data-field="mult"]'),
           cb: row.querySelector('input[type="checkbox"]'),
+          nameEl: row.querySelector('.bcs-shop-name'),
+          whSelect: row.querySelector('select[data-field="warehouse"]'),
+          qtyInput: row.querySelector('input[data-field="qty"]'),
+          multBtns: Array.from(row.querySelectorAll('.bcs-mult-btn')),
         });
       }
 
-      // ---- 绑定事件 ----
-      for (const { row, shop, cfg, whSelect, qtyInput, multSelect, cb } of rowsMap.values()) {
-        cb.onchange = async () => {
-          if (cb.checked) {
-            if (!userConfig.selectedShopIds.includes(shop.id)) {
-              userConfig.selectedShopIds.push(shop.id);
-            }
-            whSelect.disabled = false;
-            qtyInput.disabled = false;
-            if (multSelect) multSelect.disabled = false;
-            if (!shop.warehouses || !shop.warehouses.length) {
-              whSelect.innerHTML = '<option value="">加载中...</option>';
-              try {
-                const updated = await ensureWarehouses(shop.id);
-                if (updated) shop.warehouses = updated.warehouses;
-                fillWarehouseOptions(whSelect, shop, cfg);
-                autoSelectMoscow(whSelect, shop, cfg);
-              } catch (e) {
-                whSelect.innerHTML = '<option value="">加载失败</option>';
-              }
-            } else {
-              fillWarehouseOptions(whSelect, shop, cfg);
-              autoSelectMoscow(whSelect, shop, cfg);
-            }
-          } else {
-            userConfig.selectedShopIds = userConfig.selectedShopIds.filter(id => id !== shop.id);
-            whSelect.disabled = true;
-            qtyInput.disabled = true;
-            if (multSelect) multSelect.disabled = true;
-          }
-          saveConfig(userConfig);
-          // ★ v1.9.0：已选店铺集合变化 → 待上架列表「上架价」列涉及的倍数分组要重算
-          if (panelEl) renderPendingList();
-        };
-
-        whSelect.onchange = () => {
-          if (!userConfig.shopConfigs[shop.id]) userConfig.shopConfigs[shop.id] = {};
-          userConfig.shopConfigs[shop.id].warehouseId = whSelect.value ? Number(whSelect.value) : null;
-          // ★ v1.5.3：用户手动下拉选仓 = 显式意图，标记锁定，autoSelectMoscow 不再自动纠正
-          userConfig.shopConfigs[shop.id].warehouseLocked = true;
-          saveConfig(userConfig);
-        };
-
-        qtyInput.onchange = () => {
-          if (!userConfig.shopConfigs[shop.id]) userConfig.shopConfigs[shop.id] = {};
-          // ★ A6 保留原设计：未填库存默认 999
-          try {
-            userConfig.shopConfigs[shop.id].quantity = normalizeWarehouseQuantity(qtyInput.value);
-            saveConfig(userConfig);
-          } catch (error) {
-            qtyInput.value = cfg.quantity == null ? 999 : cfg.quantity;
-            showToast(error.message, 4000);
-          }
-        };
-
-        // ★ v1.9.0 上架倍数：与仓库/库存同存 shopConfigs，随 GM 配置记忆（换商品、刷新页面、重开浏览器都保持）
-        if (multSelect) {
-          multSelect.onchange = () => {
-            if (!userConfig.shopConfigs[shop.id]) userConfig.shopConfigs[shop.id] = {};
-            userConfig.shopConfigs[shop.id].priceMultiplier = normalizePriceMultiplier(multSelect.value);
-            saveConfig(userConfig);
-            if (panelEl) renderPendingList();   // 倍数变了 → 列表上架价列即时重算
-          };
-        }
-      }
-
-      // ---- 串行加载已选店铺的仓库（避免并发导致选错）----
-      for (const shop of shops) {
-        const isSelected = userConfig.selectedShopIds.includes(shop.id);
-        if (!isSelected) continue;
-        const entry = rowsMap.get(shop.id);
-        if (!entry) continue;
-        const { whSelect, cfg } = entry;
-
-        // 已有仓库数据：直接填充
+      async function loadShopWarehouse(entry) {
+        const { shop, cfg, whSelect } = entry;
         if (shop.warehouses && shop.warehouses.length) {
           fillWarehouseOptions(whSelect, shop, cfg);
           autoSelectMoscow(whSelect, shop, cfg);
-          continue;
+          return;
         }
-        // 没有则串行加载
         whSelect.innerHTML = '<option value="">加载中...</option>';
         try {
           const updated = await ensureWarehouses(shop.id);
@@ -231,25 +218,118 @@
         } catch (e) {
           whSelect.innerHTML = '<option value="">加载失败</option>';
         }
-        // 让出主线程，避免 UI 卡死
+      }
+
+      function applyRowSelectedState(entry, checked) {
+        entry.cb.checked = checked;
+        entry.row.classList.toggle('is-unchecked', !checked);
+        entry.whSelect.disabled = !checked;
+        entry.qtyInput.disabled = !checked;
+        entry.multBtns.forEach(b => { b.disabled = !checked; });
+      }
+
+      // 绑定单个店铺行事件
+      for (const entry of rowsMap.values()) {
+        const { shop, cfg, cb, nameEl, whSelect, qtyInput, multBtns } = entry;
+
+        nameEl.onclick = () => {
+          cb.checked = !cb.checked;
+          cb.onchange();
+        };
+
+        cb.onchange = async () => {
+          if (cb.checked) {
+            if (!userConfig.selectedShopIds.includes(shop.id)) {
+              userConfig.selectedShopIds.push(shop.id);
+            }
+            applyRowSelectedState(entry, true);
+            await loadShopWarehouse(entry);
+          } else {
+            userConfig.selectedShopIds = userConfig.selectedShopIds.filter(id => id !== shop.id);
+            applyRowSelectedState(entry, false);
+          }
+          saveConfig(userConfig);
+          updateShopCountPill(shops.length);
+          if (panelEl) renderPendingList();
+        };
+
+        whSelect.onchange = () => {
+          if (!userConfig.shopConfigs[shop.id]) userConfig.shopConfigs[shop.id] = {};
+          userConfig.shopConfigs[shop.id].warehouseId = whSelect.value ? Number(whSelect.value) : null;
+          userConfig.shopConfigs[shop.id].warehouseLocked = true;
+          saveConfig(userConfig);
+        };
+
+        qtyInput.onchange = () => {
+          if (!userConfig.shopConfigs[shop.id]) userConfig.shopConfigs[shop.id] = {};
+          try {
+            userConfig.shopConfigs[shop.id].quantity = normalizeWarehouseQuantity(qtyInput.value);
+            saveConfig(userConfig);
+          } catch (error) {
+            qtyInput.value = cfg.quantity == null ? 999 : cfg.quantity;
+            showToast(error.message, 4000);
+          }
+        };
+
+        multBtns.forEach(btn => {
+          btn.onclick = () => {
+            const mult = normalizePriceMultiplier(btn.dataset.mult);
+            if (!userConfig.shopConfigs[shop.id]) userConfig.shopConfigs[shop.id] = {};
+            userConfig.shopConfigs[shop.id].priceMultiplier = mult;
+            saveConfig(userConfig);
+            multBtns.forEach(b => b.classList.toggle('active', Number(b.dataset.mult) === mult));
+            if (panelEl) renderPendingList();
+          };
+        });
+      }
+
+      // 绑定「全选 / 全不选」
+      const allBtn = document.getElementById('bcs-shops-all');
+      if (allBtn) {
+        allBtn.onclick = async () => {
+          userConfig.selectedShopIds = shops.map(s => s.id);
+          saveConfig(userConfig);
+          for (const entry of rowsMap.values()) applyRowSelectedState(entry, true);
+          updateShopCountPill(shops.length);
+          if (panelEl) renderPendingList();
+          for (const entry of rowsMap.values()) {
+            await loadShopWarehouse(entry);
+          }
+        };
+      }
+      const noneBtn = document.getElementById('bcs-shops-none');
+      if (noneBtn) {
+        noneBtn.onclick = () => {
+          userConfig.selectedShopIds = [];
+          saveConfig(userConfig);
+          for (const entry of rowsMap.values()) applyRowSelectedState(entry, false);
+          updateShopCountPill(shops.length);
+          if (panelEl) renderPendingList();
+        };
+      }
+
+      // 串行加载已选店铺的仓库（避免并发导致选错）
+      for (const shop of shops) {
+        if (!userConfig.selectedShopIds.includes(shop.id)) continue;
+        const entry = rowsMap.get(shop.id);
+        if (!entry) continue;
+        await loadShopWarehouse(entry);
         await new Promise(r => setTimeout(r, 50));
       }
     } catch (e) {
+      updateShopCountPill(0);
       renderShopMessage(body, '加载失败：' + e.message, e.message.includes(BCS_LOGIN_URL));
+      updateFooterSummary();
     }
   }
 
   // 自动选莫斯科仓库（用户未手动锁定过时，自动纠正为莫斯科）
   function autoSelectMoscow(select, shop, cfg) {
-    // ★ v1.5.3：仅当用户「手动」选过仓库（warehouseLocked）才保持不变；
-    //   否则（含历史脏 warehouseId，无 locked 标记）无条件重新匹配莫斯科并覆盖，
-    //   修复历史版本误写入成都仓库后永久沿用的 bug。
     if (cfg.warehouseLocked === true && cfg.warehouseId) {
       const opt = select.querySelector(`option[value="${cfg.warehouseId}"]`);
       if (opt) opt.selected = true;
       return;
     }
-    // 自动状态 → 重新匹配莫斯科
     const moscow = findMoscowWarehouse(shop.warehouses);
     if (moscow) {
       const opt = select.querySelector(`option[value="${moscow.id}"]`);
@@ -258,8 +338,6 @@
       userConfig.shopConfigs[shop.id].warehouseId = Number(moscow.id);
       saveConfig(userConfig);
     } else if (cfg.warehouseId) {
-      // ★ v1.5.3：匹配不到莫斯科时清空历史脏值（不 fallback 到第一个仓库），
-      //   让 batchShelve 报「未选择发货仓库」阻止提交，而非误上架到错误仓库
       if (!userConfig.shopConfigs[shop.id]) userConfig.shopConfigs[shop.id] = {};
       userConfig.shopConfigs[shop.id].warehouseId = null;
       saveConfig(userConfig);
@@ -268,119 +346,119 @@
 
   function fillWarehouseOptions(select, shop, cfg) {
     if (!shop.warehouses || !shop.warehouses.length) {
-      select.innerHTML = '<option value="">无仓库</option>';
+      select.innerHTML = '<option value="">无可用仓库</option>';
       return;
     }
     const current = cfg.warehouseId ? String(cfg.warehouseId) : '';
-    select.innerHTML = '<option value="">发货地...</option>' +
-      shop.warehouses.map(w => `<option value="${w.id}" ${String(w.id) === current ? 'selected' : ''}>${w.name}</option>`).join('');
+    select.innerHTML = '<option value="">请选择发货仓...</option>' +
+      shop.warehouses.map(w => (
+        `<option value="${escHtml(w.id)}" ${String(w.id) === current ? 'selected' : ''}>${escHtml(w.name)}</option>`
+      )).join('');
   }
 
-  // ---- 价格表与上架价设置（★ v1.9.0：价格只有一条口径，不再有全局默认值/自定义输入）----
+  // ---- 价格表与商品前缀码设置 ----
   function renderPriceSettings() {
     const body = document.getElementById('bcs-price-body');
+    const statusEl = document.getElementById('bcs-price-status');
+    const actionsEl = document.getElementById('bcs-price-actions');
     if (!body) return;
-    body.innerHTML = '';
 
-    const upload = document.createElement('div');
-    upload.className = 'bcs-field';
-    upload.style.cssText = 'gap:8px;flex-wrap:wrap;';
-    upload.innerHTML = `
-      <span role="status"></span>
-      <button type="button" class="bcs-btn-fetch">上传价格表 (.xlsx)</button>
-      <input type="file" accept=".xlsx" hidden>
-    `;
-    body.appendChild(upload);
-
-    const status = upload.querySelector('[role="status"]');
-    if (bossDefaultsFile) {
-      const { count, fileName, updatedAt } = bossDefaultsFile;
-      const date = new Date(updatedAt).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' });
-      status.textContent = `已加载 ${count} 条（${fileName} · ${date}）`;
-    } else {
-      status.textContent = '尚未上传价格表，请先上传 商品价格表.xlsx';
+    // 1) 头部状态徽标
+    if (statusEl) {
+      if (bossDefaultsFile) {
+        const { count, fileName, updatedAt } = bossDefaultsFile;
+        const date = new Date(updatedAt).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' });
+        statusEl.innerHTML =
+          `<span class="bcs-pill bcs-pill-ok">✓ 已加载 ${count} 条</span> ` +
+          `<span class="bcs-section-sub">${escHtml(fileName)} · ${escHtml(date)}</span>`;
+      } else {
+        statusEl.innerHTML = '<span class="bcs-pill bcs-pill-warn">未上传价格表</span>';
+      }
     }
 
+    // 2) 头部上传按钮
     function summarizeWarnings(warnings) {
       return warnings?.length
         ? `\n已跳过 ${warnings.length} 行（最多显示 5 条）\n${warnings.slice(0, 5).join('\n')}`
         : '';
     }
 
-    const uploadButton = upload.querySelector('button');
-    const fileInput = upload.querySelector('input');
-    uploadButton.onclick = () => fileInput.click();
-    fileInput.onchange = async () => {
-      const file = fileInput.files[0];
-      fileInput.value = '';
-      if (!file) return;
+    if (actionsEl) {
+      actionsEl.innerHTML = `
+        <button type="button" class="bcs-btn-accent" id="bcs-upload-xlsx">${bossDefaultsFile ? '更新价格表 (.xlsx)' : '上传价格表 (.xlsx)'}</button>
+        <input type="file" id="bcs-upload-xlsx-input" accept=".xlsx" hidden>
+      `;
+      const uploadButton = actionsEl.querySelector('#bcs-upload-xlsx');
+      const fileInput = actionsEl.querySelector('#bcs-upload-xlsx-input');
+      uploadButton.onclick = () => fileInput.click();
+      fileInput.onchange = async () => {
+        const file = fileInput.files[0];
+        fileInput.value = '';
+        if (!file) return;
 
-      uploadButton.disabled = true;
-      try {
-        if (!/\.xlsx$/i.test(file.name)) throw new Error('请选择 .xlsx 文件');
-        const parsed = parseBossDefaultsWorkbook(await file.arrayBuffer());
-        await saveBossDefaults(file.name, parsed);
-        refreshBossDefaults();
+        uploadButton.disabled = true;
+        try {
+          if (!/\.xlsx$/i.test(file.name)) throw new Error('请选择 .xlsx 文件');
+          const parsed = parseBossDefaultsWorkbook(await file.arrayBuffer());
+          await saveBossDefaults(file.name, parsed);
+          refreshBossDefaults();
 
-        const message = `已加载 ${parsed.entries.length} 条价格数据`;
-        if (parsed.warnings.length) alert(message + summarizeWarnings(parsed.warnings));
-        else showToast(message);
-      } catch (error) {
-        alert('上传价格表失败：' + error.message + summarizeWarnings(error.warnings));
-      } finally {
-        uploadButton.disabled = false;
-      }
-    };
-
-    // 提示文字
-    const tip = document.createElement('div');
-    tip.style.cssText = 'padding:6px 8px; background:#fffbe6; border:1px solid #ffe58f; border-radius:4px; margin-bottom:8px; font-size:11px; color:#8c6e2a; line-height:1.5;';
-    tip.innerHTML = '<strong>上架价 = 价格表（商品价格表.xlsx）最低售价 × 店铺倍数</strong>（倍数在「店铺选择」里按店铺设置，只能选 ×1/×2/×5/×10）。' +
-                    '包装尺寸与重量也一律取价格表。价格表查不到的商品将被阻止上架 —— 请务必选择已登记前缀码（或让商品供应商代码为已登记的 BCS-XXXX-nmId）。';
-    body.appendChild(tip);
-
-    // 按中文名、前缀码或 SKU 筛选已上传的价格表条目。
-    const prefixSearchField = document.createElement('div');
-    prefixSearchField.className = 'bcs-field';
-    prefixSearchField.innerHTML = `
-      <label>搜索前缀码：</label>
-      <input type="text" id="bcs-prefix-search" placeholder="输入中文名 / 前缀码 / SKU 片段过滤下拉选项">
-    `;
-    body.appendChild(prefixSearchField);
-
-    const prefixField = document.createElement('div');
-    prefixField.className = 'bcs-field';
-    prefixField.innerHTML = `
-      <label>商品前缀码：</label>
-      <select id="bcs-prefix-code"></select>
-      <input type="text" id="bcs-prefix-code-input" maxlength="4" placeholder="4位大写字母"
-             style="display:none;width:90px;margin-left:6px;flex:0 0 90px;">
-    `;
-    body.appendChild(prefixField);
-
-    // ★ v1.9.0 前缀码未生效时的显式告警（未登记 / 自动随机 → 商品无法匹配价格表 → 会被阻止上架）
-    const prefixWarn = document.createElement('div');
-    prefixWarn.id = 'bcs-prefix-warn';
-    prefixWarn.style.cssText = 'display:none;padding:6px 8px;margin-bottom:8px;background:#fef0f0;border:1px solid #fbc4c4;border-radius:4px;font-size:11px;color:#cb2c2c;line-height:1.5;';
-    body.appendChild(prefixWarn);
-
-    const prefixSelect = document.getElementById('bcs-prefix-code');
-    const prefixInput = document.getElementById('bcs-prefix-code-input');
-
-    function updatePrefixWarn() {
-      const cur = userConfig.prefixCode || '';
-      if (cur && isRegisteredPrefixCode(cur)) {
-        prefixWarn.style.display = 'none';
-        prefixWarn.textContent = '';
-        return;
-      }
-      prefixWarn.style.display = '';
-      prefixWarn.textContent = cur
-        ? `⚠️ 前缀码 ${cur} 未在价格表登记：商品无法确定最低售价，上架时会被阻止。`
-        : '⚠️ 当前为「自动随机生成」：随机前缀码不参与价格表归属 → 商品无法确定最低售价，上架时会被阻止。请选择已登记前缀码。';
+          const message = `已加载 ${parsed.entries.length} 条价格数据`;
+          if (parsed.warnings.length) alert(message + summarizeWarnings(parsed.warnings));
+          else showToast(message);
+        } catch (error) {
+          alert('上传价格表失败：' + error.message + summarizeWarnings(error.warnings));
+        } finally {
+          uploadButton.disabled = false;
+        }
+      };
     }
 
-    // 渲染/恢复 select 与输入框状态（按 userConfig.prefixCode 定位）
+    // 3) 主体：搜索框 + 前缀下拉 + 实时匹配详情/告警条
+    body.innerHTML = `
+      <div class="bcs-prefix-grid">
+        <div class="bcs-input-group">
+          <label for="bcs-prefix-search">筛选</label>
+          <input type="text" id="bcs-prefix-search" class="bcs-control w-search" placeholder="输入中文名 / 前缀码 / SKU">
+        </div>
+        <div class="bcs-input-group grow">
+          <label for="bcs-prefix-code" id="bcs-prefix-label">商品前缀码</label>
+          <select id="bcs-prefix-code" class="bcs-control flex-1"></select>
+          <input type="text" id="bcs-prefix-code-input" class="bcs-control w-custom" maxlength="4" placeholder="4位字母" style="display:none;">
+        </div>
+      </div>
+      <div id="bcs-prefix-feedback" class="bcs-match-bar"></div>
+    `;
+
+    const prefixSearch = document.getElementById('bcs-prefix-search');
+    const prefixLabel = document.getElementById('bcs-prefix-label');
+    const prefixSelect = document.getElementById('bcs-prefix-code');
+    const prefixInput = document.getElementById('bcs-prefix-code-input');
+    const feedbackEl = document.getElementById('bcs-prefix-feedback');
+
+    function updatePrefixFeedback() {
+      const cur = userConfig.prefixCode || '';
+      if (!bossDefaultsFile) {
+        feedbackEl.className = 'bcs-match-bar info';
+        feedbackEl.innerHTML = '<span>请先点击右上角「上传价格表 (.xlsx)」，上传后即可按中文名或前缀码匹配售价和包装尺寸。</span>';
+        return;
+      }
+      const boss = cur ? getBossDefaults(cur) : null;
+      if (boss) {
+        feedbackEl.className = 'bcs-match-bar ok';
+        feedbackEl.innerHTML =
+          `<span>已匹配 <b>${escHtml(cur)} · ${escHtml(boss.name)}</b>` +
+          `　｜　最低售价 <b>¥${boss.minPrice}</b>` +
+          `　｜　包装 <b>${boss.length}×${boss.width}×${boss.height} cm / ${boss.weight} kg</b></span>` +
+          `<span class="bcs-match-formula">上架价 = 最低售价 × 店铺倍数</span>`;
+        return;
+      }
+      feedbackEl.className = 'bcs-match-bar warn';
+      feedbackEl.textContent = cur
+        ? `前缀码 ${cur} 未在价格表登记：商品无法确定最低售价，上架时将被阻止。`
+        : '当前为「自动随机生成」：未匹配价格表的商品将被阻止上架，请在上方选择对应商品前缀码。';
+    }
+
     function syncPrefixSelect() {
       const cur = userConfig.prefixCode || '';
       if (!cur) {
@@ -396,12 +474,9 @@
         prefixInput.style.display = '';
         prefixInput.value = cur;
       }
-      updatePrefixWarn();
+      updatePrefixFeedback();
     }
-    // ★ v1.5.9 前缀码下拉搜索过滤：按 中文名/前缀码/SKU 片段（大小写不敏感包含匹配）重建登记码 options。
-    //   常驻项「自动随机生成」(value="") 与「自定义…」(value="__custom__") 始终保留；
-    //   过滤只改可见选项，不改 userConfig.prefixCode 与 onchange/applyPrefixCode 应用逻辑。
-    const prefixSearch = document.getElementById('bcs-prefix-search');
+
     function renderPrefixOptions(query) {
       const q = (query || '').trim().toLowerCase();
       const list = q
@@ -410,15 +485,19 @@
             (p.name || '').toLowerCase().includes(q) ||
             (p.sku || '').toLowerCase().includes(q))
         : PREFIX_CODES;
-      // 当前已选登记前缀码不在过滤结果中时临时插入该项，保持显示与配置一致（避免误显示为"自动随机生成"）
+
+      if (prefixLabel) {
+        prefixLabel.textContent = q ? `商品前缀码（匹配 ${list.length}）` : '商品前缀码';
+      }
+
       const cur = userConfig.prefixCode || '';
       const needCur = cur && isRegisteredPrefixCode(cur) && !list.some(p => p.code === cur);
-      const opts = [new Option('自动随机生成', ''), ...list.map(p => new Option(getPrefixCodeLabel(p.code), p.code))];
+      const opts = [new Option('自动随机生成（不匹配价格表）', ''), ...list.map(p => new Option(getPrefixCodeLabel(p.code), p.code))];
       if (needCur) {
         opts.push(new Option(getPrefixCodeLabel(cur), cur));
       }
       if (q && !list.length && !needCur) {
-        const empty = new Option('（无匹配，请修改或清空搜索词）', '__none__');
+        const empty = new Option('（无匹配，请修改或清空筛选词）', '__none__');
         empty.disabled = true;
         opts.push(empty);
       }
@@ -429,18 +508,15 @@
     renderPrefixOptions('');
     prefixSearch.oninput = () => renderPrefixOptions(prefixSearch.value);
 
-    // 应用前缀码：保存配置 + 整批重建「自动格式」vendorCode + 轻量刷新表格
-    // ★ v1.9.0：不再写任何全局默认值（售价/尺寸均由价格表 + 店铺倍数决定），前缀码仅用于价格表归属
     function applyPrefixCode(code) {
       if (code === (userConfig.prefixCode || '')) return;
       userConfig.prefixCode = code;
       saveConfig(userConfig);
-      const changed = rebuildPendingVendorCodes(pendingList, code);   // 空 code 返回 []，不清空已生成值
+      const changed = rebuildPendingVendorCodes(pendingList, code);
       if (changed.length) {
         savePending(pendingList);
         showToast(`已将 ${changed.length} 个商品的供应商代码更新为前缀码 ${code || '（自动随机）'}`, 4000);
       }
-      // ★ v1.9.0：前缀码决定价格表归属 → 整批商品的最低价/上架价/包装都要重算
       if (panelEl) renderPendingList();
       syncPrefixSelect();
     }
@@ -452,14 +528,12 @@
       } else if (v === '__custom__') {
         prefixInput.style.display = '';
         prefixInput.focus();
-        // 不立即保存，等待输入框提交
       } else {
         prefixInput.style.display = 'none';
         applyPrefixCode(v);
       }
     };
 
-    // 自动大写转换 + 过滤非法字符 + 限长
     prefixInput.oninput = () => {
       prefixInput.value = prefixInput.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
     };
@@ -467,39 +541,17 @@
       const v = prefixInput.value.trim();
       if (!isValidPrefixCode(v)) {
         alert('前缀码必须为 4 位大写字母（A-Z）');
-        syncPrefixSelect();   // 恢复旧状态，不写入配置（阻止提交）
+        syncPrefixSelect();
         return;
       }
       if (!isRegisteredPrefixCode(v)) {
-        // 允许提交，但警告无法归属价格表（★ v1.9.0：未登记 = 无法确定最低售价 = 会被阻止上架）
         alert(`前缀码 ${v} 未在价格表中登记，商品将无法确定最低售价，上架时会被阻止`);
       }
       applyPrefixCode(v);
     };
     prefixInput.onkeydown = (e) => {
-      if (e.key === 'Enter') prefixInput.blur();   // 触发 onchange 完成输入
+      if (e.key === 'Enter') prefixInput.blur();
     };
 
-    // ★ v1.9.0：已删除「统一售价」与「包装长/宽/高/重」全局默认值输入框
-    //   —— 上架价 = 价格表最低售价 × 店铺倍数，包装尺寸/重量取价格表，不再存在自定义兜底
-
-    // 提交间隔
-    const intervalField = document.createElement('div');
-    intervalField.className = 'bcs-field';
-    intervalField.innerHTML = `
-      <label>提交间隔(秒)：</label>
-      <input type="number" id="bcs-interval" value="${userConfig.intervalMs / 1000}" min="1" step="1">
-    `;
-    body.appendChild(intervalField);
-    document.getElementById('bcs-interval').onchange = (e) => {
-      userConfig.intervalMs = (Number(e.target.value) || 2) * 1000;
-      saveConfig(userConfig);
-    };
-
-    // 说明：分组提交的请求数 = 商品数 × 已选店铺的倍数种类数
-    const hint = document.createElement('div');
-    hint.style.cssText = 'font-size:11px;color:#888;line-height:1.5;margin-top:4px;';
-    hint.textContent = '提示：不同倍数的店铺会在提交时分组，每组单独请求一次（请求数 = 商品数 × 倍数种类数），间隔按每次请求计算。';
-    body.appendChild(hint);
+    updateFooterSummary();
   }
-

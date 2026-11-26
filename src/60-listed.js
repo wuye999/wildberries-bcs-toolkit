@@ -172,10 +172,14 @@
           shopsHtml = `<div class="bcs-listed-shops">已在 ${shopNames.length} 个店铺上架：${shopNames.join('、')}</div>`;
         }
         banner.innerHTML = `
-          <span class="bcs-listed-close" onclick="this.parentElement.remove()">×</span>
-          ⚠️ 此商品（${product.nmId}）已在 BCS 上架
+          <button type="button" class="bcs-listed-close" title="关闭提示">×</button>
+          此商品（${product.nmId}）已在 BCS 上架
           ${shopsHtml}
         `;
+        banner.querySelector('.bcs-listed-close').onclick = () => {
+          banner.remove();
+          document.body.style.paddingTop = '';
+        };
         document.body.appendChild(banner);
         // 调整页面顶部 padding 避免遮挡
         document.body.style.paddingTop = (details && details.length > 0) ? '56px' : '40px';
