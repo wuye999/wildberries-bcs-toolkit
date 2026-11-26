@@ -195,16 +195,7 @@
         return out;
       }
       out.wrote.push('上架');
-
-      // 回读：轮询 Content API 等卡片出现（BCS 建卡是异步队列）
-      let nm = null;
-      for (let i = 0; i < 6; i++) {
-        await wbSleep(5000);
-        const r = await wbFindCardByVc(shop.apiKey, cfg.vendorCode);
-        if (r.ok && r.card) { nm = r.card.nmID; break; }
-      }
-      out.nmId = nm;
-      if (!nm) out.bad.push('已提交，但 30 秒内未在 WB 查到卡片（可能仍在建卡队列，稍后刷新预览确认）');
+      out.notes.push('已提交 BCS，等待建卡');
       out.ok = true;
       return out;
     } catch (e) {

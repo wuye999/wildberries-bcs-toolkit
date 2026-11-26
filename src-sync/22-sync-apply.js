@@ -4,7 +4,7 @@
   //      1) cards/update 是「全量覆盖」→ 必须先用目标店现值铺满，再覆盖勾选字段
   //      2) documents 原样回传（漏传会被清空）
   //      3) sizes 一律用目标店自己的 chrtID / 条码，绝不夺源店
-  //      4) 每次写后回读校验（cards/list）
+  //      4) 写入前重读目标卡，提交结果以写入接口响应为准
   // ============================================================
   const SYNC_WRITE_GAP = 2500;   // 商品间间隔（ms）
 
@@ -59,33 +59,6 @@
       { nmId: nmId, data: urls }, 90000);
   }
 
-  // 写后回读：返回不一致项描述数组（空数组=一致）
-  async function verifyWrote(apiKey, vc, expect) {
-    const r = await wbFindCardByVc(apiKey, vc);
-    if (!r.ok || !r.card) return ['回读失败：' + (r.err || '未找到卡片')];
-    const c = r.card;
-    const bad = [];
-    if (expect.title != null && normText(c.title) !== normText(expect.title)) bad.push('标题未生效');
-    if (expect.description != null && normText(c.description) !== normText(expect.description)) bad.push('描述未生效');
-    if (expect.dimensions) {
-      const a = dimsOf(c), b = expect.dimensions;
-      if (a.length !== b.length || a.width !== b.width || a.height !== b.height || a.weightBrutto !== b.weightBrutto) bad.push('尺寸重量未生效');
-    }
-    if (expect.characteristics) {
-      const got = charcMap(c);
-      for (const ch of expect.characteristics) {
-        const g = got.get(String(ch.id));
-        const want = valText(ch.value);
-        if (want && (!g || g.value !== want)) { bad.push('属性 ' + ch.id + ' 未生效'); break; }
-      }
-    }
-    if (expect.photoCount != null) {
-      const n = photoUrls(c).length;
-      if (n !== expect.photoCount) bad.push(`图片 ${n} 张（期望 ${expect.photoCount}）`);
-    }
-    return bad;
-  }
-
   /**
    * 对单个「已上架」目标执行同步
    * @returns {{ok:boolean, wrote:string[], bad:string[], err:string, nmId:number}}
@@ -123,7 +96,6 @@
       //   2) **每次调用都会重新编码图片**，即使传回同一组图字节也会变（≈1% 体积下降）
       //   3) 只能整组替换，没有"只改第 N 张"的接口
       //   → 因此先用 dHash 逐张比对，只有真检测到差异才整组替换；「强制换图」为兜底
-      let expectPhotos = null;
       {
         const urls = photoUrls(srcCard);
         const tgtUrls = photoUrls(tgt);
@@ -141,20 +113,10 @@
           const mr = await wbMediaSave(tgtShop.apiKey, tgt.nmID, urls);
           if (!mr.ok) { out.bad.push('图片：' + (mr.err || ('HTTP ' + mr.status))); }
           else if (mr.data && mr.data.error) { out.bad.push('图片：' + (mr.data.errorText || '返回 error')); }
-          else { out.wrote.push('图片'); expectPhotos = urls.length; }
+          else { out.wrote.push('图片'); }
         }
       }
 
-      // ---- 3) 写后回读 ----
-      const expect = {
-        title: fields.title ? srcCard.title : null,
-        description: fields.description ? srcCard.description : null,
-        dimensions: fields.dimensions ? dimsOf(srcCard) : null,
-        characteristics: fields.characteristics ? ((srcCard.characteristics) || []) : null,
-        photoCount: expectPhotos,
-      };
-      await wbSleep(1500);
-      out.bad = out.bad.concat(await verifyWrote(tgtShop.apiKey, vc, expect));
       out.ok = out.bad.length === 0;
       return out;
     } catch (e) {

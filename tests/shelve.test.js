@@ -812,34 +812,169 @@ test('跨店补上架保留库存 0、源商品链接和视频，按设置清空
   assert.equal(row.videos, video);
 });
 
-test('跨店补上架写前查重：已存在不提交、查重失败不提交；实时描述清洗后提交', async () => {
+test('跨店同步只读一次写前目标卡，按内容和图片接口响应返回提交结果', async () => {
+  const calls = [];
+  const source = { nmID: 1001, subjectID: 7, title: '新标题', photos: [{ big: 'https://example.invalid/source.webp' }] };
+  const target = {
+    nmID: 2001, subjectID: 7, title: '旧标题', vendorCode: 'VC-1', description: '目标描述',
+    documents: [{ id: 31 }], sizes: [{ chrtID: 41, skus: ['TARGET BARCODE'] }],
+  };
+  const shop = { shopName: '目标店', apiKey: 'target-key' };
+  const fields = { title: true, photos: true, photosForce: true };
+  const c = context(['src-sync/20-sync-diff.js', 'src-sync/22-sync-apply.js'], {
+    WB_API: { content: 'https://example.invalid' },
+    wbCardsList: async (apiKey, opts) => {
+      calls.push('cards/list');
+      assert.equal(apiKey, shop.apiKey);
+      assert.equal(opts.textSearch, target.vendorCode);
+      return { ok: true, cards: [target] };
+    },
+    wbSleep: async ms => { calls.push(ms); },
+    wbThrottle: async () => { calls.push('throttle'); },
+  });
+  const contentFailure = { ok: true, data: { error: true, errorText: '内容拒绝' } };
+  const photoFailure = { ok: false, status: 503 };
+  let contentResponse = { ok: true, data: { error: false } };
+  let photoResponse = { ok: true, data: { error: false } };
+  c.wbOpenFetch = async (apiKey, method, url, payload) => {
+    assert.equal(apiKey, shop.apiKey);
+    assert.equal(method, 'POST');
+    if (url.endsWith('/content/v2/cards/update')) {
+      calls.push('cards/update');
+      assert.equal(payload[0].title, source.title);
+      assert.equal(payload[0].description, target.description);
+      assert.deepEqual(payload[0].documents, target.documents);
+      assert.deepEqual(clone(payload[0].sizes), target.sizes);
+      return contentResponse;
+    }
+    assert.match(url, /\/content\/v3\/media\/save$/);
+    calls.push('media/save');
+    assert.deepEqual(clone(payload), { nmId: target.nmID, data: [source.photos[0].big] });
+    return photoResponse;
+  };
+
+  const fullWrite = ['cards/list', 'throttle', 'cards/update', 'throttle', 'media/save'];
+  let result = await c.syncOneCell(source, shop, target.vendorCode, fields);
+  assert.deepEqual(calls.splice(0), fullWrite);
+  assert.deepEqual(clone(result), { ok: true, wrote: ['内容', '图片'], bad: [], err: '', nmId: 2001, shop: '目标店' });
+
+  photoResponse = photoFailure;
+  result = await c.syncOneCell(source, shop, target.vendorCode, fields);
+  assert.deepEqual(calls.splice(0), fullWrite);
+  assert.deepEqual(clone(result), { ok: false, wrote: ['内容'], bad: ['图片：HTTP 503'], err: '', nmId: 2001, shop: '目标店' });
+
+  contentResponse = contentFailure;
+  result = await c.syncOneCell(source, shop, target.vendorCode, fields);
+  assert.deepEqual(calls.splice(0), ['cards/list', 'throttle', 'cards/update']);
+  assert.equal(result.ok, false);
+  assert.match(result.err, /cards\/update 返回错误：内容拒绝/);
+  assert.equal(result.wrote.length, 0);
+
+  result = await c.syncOneCell({ ...source, subjectID: 8 }, shop, target.vendorCode, fields);
+  assert.deepEqual(calls, ['cards/list']);
+  assert.equal(result.ok, false);
+  assert.match(result.err, /类目不一致/);
+});
+
+test('跨店补上架写前查重并清洗描述，BCS 接收后直接返回且不轮询', async () => {
   const posts = [];
+  const calls = [];
   const c = context(['src/30-config.js', 'src/45-api-wb.js', 'src-sync/24-shelve-new.js'], {
     photoUrls: card => card.photos.map(p => p.big), dimsOf: card => card.dimensions,
-    normText: value => String(value || '').trim(), wbSleep: async () => {},
-    wbFindCardByVc: async () => ({ ok: true, card: { nmID: 54321 } }),
+    normText: value => String(value || '').trim(),
+    wbSleep: async ms => { calls.push(ms); },
+    wbFindCardByVc: async () => { calls.push('cards/list'); return { ok: true, card: null }; },
   });
   c.evaluate('userConfig = loadConfig()');
   const source = { nmID: 12345, title: 'Товар', subjectID: 1, description: 'Новый./& ' + 'x'.repeat(2400),
     photos: [{ big: 'https://example.invalid/photo.webp' }], dimensions: { length: 14, width: 7, height: 3, weightBrutto: 0.12 } };
   const cfg = { vendorCode: item().vendorCode, price: 80, quantity: 0, warehouseId: 11 };
   c.fetchWbCardInfo = async () => clone(item().wbCardInfo);
-  c.bcsApiCall = async () => ({ code: 200, rows: [{ vendorCode: cfg.vendorCode }] });
+  c.bcsApiCall = async path => { calls.push(path); return { code: 200, rows: [{ vendorCode: cfg.vendorCode }] }; };
+  const lookup = `/shopKeeper/productList/list?filter=ALL&pageNum=1&pageSize=10&shopId=1&vendorCodeMulti=${cfg.vendorCode}`;
   let result = await c.shelveOne(source, shops()[0], cfg);
   assert.equal(result.ok, true); assert.equal(result.wrote.length, 0);
   assert.ok(result.notes.some(note => note.includes('未重复提交')));
-  c.bcsApiCall = async () => ({ code: 500 });
+  assert.deepEqual(calls.splice(0), [lookup]);
+  c.bcsApiCall = async path => { calls.push(path); return { code: 500 }; };
   result = await c.shelveOne(source, shops()[0], cfg);
   assert.equal(result.ok, false); assert.match(result.err, /查询失败/);
-  c.bcsApiCall = async (_, options) => {
+  assert.deepEqual(calls.splice(0), [lookup]);
+  c.bcsApiCall = async (path, options) => {
+    calls.push(path);
     if (options?.method === 'POST') { posts.push(clone(options.data)); return { code: 200 }; }
     return { code: 200, rows: [] };
   };
   result = await c.shelveOne(source, shops()[0], cfg);
   assert.equal(result.ok, true); assert.equal(posts.length, 1);
+  assert.equal(result.nmId, null);
+  assert.deepEqual(clone(result.wrote), ['上架']);
+  assert.equal(result.bad.length, 0);
+  assert.ok(result.notes.includes('已提交 BCS，等待建卡'));
+  assert.deepEqual(calls, [lookup, '/system/wbCollection/wb/new']);
   const description = JSON.parse(posts[0].shopDatas[0].wbCardInfo).description;
   assert.ok(description.startsWith('Новый ')); assert.equal(description.length, 2000);
   assert.equal(JSON.parse(posts[0].shop)[0].warehouseQuantity, 0);
+});
+
+test('跨店同步面板立即展示提交结果，手动重新比对前禁止重复执行', async () => {
+  const ids = ['bd', 'status', 'run', 'apply', 'prog'];
+  const elements = Object.fromEntries(ids.map(id => [id, {}]));
+  elements.prog.classList = { toggle: (_, show) => { elements.prog.visible = show; } };
+  let previewCalls = 0;
+  const submissions = [];
+  const sourceShop = { id: 1, shopName: '源店', apiKey: 'source-key' };
+  const target = { id: 2, shopName: '目标店', apiKey: 'target-key' };
+  const titleDiff = { key: 'title', label: '标题', same: false, src: '新标题', tgt: '旧标题' };
+  const plan = ['VC-1', 'VC-2'].map(vendorCode => ({
+    item: { vendorCode, title: '新标题' },
+    source: { nmID: 1001 },
+    targets: [{ shop: target, status: 'listed', diff: [titleDiff] }],
+  }));
+  const c = context(['src-sync/20-sync-diff.js', 'src-sync/32-ui-panel.js'], {
+    SYNC_PREFIX: 'bcs-sync-', SYNC_WRITE_GAP: 2500, plan, sourceShop, target,
+    document: { getElementById: id => elements[id.replace('bcs-sync-panel-', '')] ?? null },
+    syncOneCell: async (_, shop, vc) => {
+      submissions.push(vc);
+      const ok = vc === 'VC-1';
+      return { ok, shop: shop.shopName, wrote: ok ? ['内容'] : [], err: ok ? '' : '提交失败' };
+    },
+    wbSleep: async ms => { submissions.push(ms); },
+  });
+  c.buildSyncPlan = async () => { previewCalls++; return plan; };
+  c.evaluate(`
+    syncState.shops = [sourceShop, target];
+    syncState.sourceId = 1;
+    syncState.targetIds.add(2);
+    syncState.fetchedShopIds.add(2);
+    syncState.items = plan.map(row => row.item);
+    syncState.plan = plan;
+  `);
+  const jobs = c.collectJobs(plan);
+  await c.doRun(jobs, []);
+
+  assert.deepEqual(submissions, ['VC-1', 2500, 'VC-2']);
+  assert.equal(previewCalls, 0);
+  assert.equal(c.evaluate('syncState.running'), false);
+  assert.equal(c.evaluate('syncState.plan'), null);
+  assert.deepEqual(clone(c.evaluate('syncState.lastResults.map(result => result.ok)')), [true, false]);
+  assert.equal(elements.prog.visible, false);
+  assert.equal(elements.run.disabled, false);
+  assert.equal(elements.apply.disabled, true);
+  assert.equal(elements.status.textContent, '执行完成：成功 1 / 失败 1');
+  assert.match(elements.bd.innerHTML, /上次执行结果/);
+  assert.match(elements.bd.innerHTML, /提交失败/);
+  assert.match(elements.bd.innerHTML, /重新比对/);
+  assert.doesNotMatch(elements.bd.innerHTML, /待同步 ·/);
+
+  await c.doRun(jobs, []);
+  assert.deepEqual(submissions, ['VC-1', 2500, 'VC-2']);
+
+  await c.runPreview();
+  assert.equal(previewCalls, 1);
+  assert.equal(elements.apply.disabled, false);
+  assert.match(elements.bd.innerHTML, /待同步 ·/);
+  assert.match(elements.bd.innerHTML, /上次执行结果/);
 });
 
 test('跨店同步面板：取消同步不写入、仅勾选补上架也会查询并保留手填配置、切换字段即时重算差异', () => {

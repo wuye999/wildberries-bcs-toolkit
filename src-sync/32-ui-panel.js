@@ -524,7 +524,7 @@
 
     if (btn.dataset.act === 'clear-results') {
       syncState.lastResults = null;
-      if (syncState.plan) renderPlan(syncState.plan);
+      renderPlan(syncState.plan);
       return;
     }
 
@@ -786,6 +786,16 @@
     const bodyEl = document.getElementById(PANEL_SYNC + '-bd');
     if (!bodyEl) return;
 
+    if (!plan) {
+      bodyEl.innerHTML = `
+        ${renderResults(syncState.lastResults)}
+        <div class="tip">执行结果以提交接口的返回为准。如需查看最新差异，请稍后点击「重新比对」。</div>
+      `;
+      updateActionButton(0, 0);
+      updateRunButtonHint();
+      return;
+    }
+
     const activeIds = activeTargetShopIds();
     const counts = { all: 0, sync: 0, shelve: 0, same: 0, absent: 0, error: 0 };
 
@@ -934,7 +944,7 @@
       ${noticeHtml}
       ${filterHtml}
       ${emptyList}
-      <div class="tip">说明：图片会逐张比对内容，仅在确实不同（或勾选「强制换图」）时才会整组替换；每次执行写入后会自动回读校验。</div>
+      <div class="tip">图片会逐张比对，仅在内容不同或勾选「强制换图」时整组替换。执行结果以提交接口的返回为准。如需查看最新差异，请稍后点击「重新比对」。</div>
     `;
 
     updateActionButton(counts.sync, counts.shelve);
@@ -1064,7 +1074,7 @@
         <div class="cfm-hd">确认写入 Wildberries / BCS？</div>
         <div class="cfm-bd">
           ${blocks.join('')}
-          <div class="tip" style="margin:0">本次操作会真实写入目标店铺，完成后将自动回读校验结果。</div>
+          <div class="tip" style="margin:0">本次操作会写入目标店铺，并按提交接口的返回展示结果。如需查看最新差异，请稍后点击「重新比对」。</div>
         </div>
         <div class="cfm-ft">
           <button type="button" class="btn" data-act="cfm-cancel">取消</button>
@@ -1081,6 +1091,7 @@
   }
 
   async function doRun(jobs, shelveJobs) {
+    if (syncState.running || !syncState.plan) return;
     const srcShop = (syncState.shops || []).find(s => s.id === syncState.sourceId);
     const sJobs = shelveJobs || [];
     const total = jobs.length + sJobs.length;
@@ -1137,16 +1148,18 @@
         if (i < sJobs.length - 1) await wbSleep(SYNC_WRITE_GAP);
       }
       const okN = results.filter(r => r.ok).length;
-      syncState.lastResults = results;
       setPanelStatus(`执行完成：成功 ${okN} / 失败 ${results.length - okN}`);
       showToast(`执行完成：成功 ${okN}，失败 ${results.length - okN}`, 5000);
     } catch (e) {
       log.error('执行失败:', e && e.message);
       setPanelStatus('执行异常：' + e.message);
-      syncState.lastResults = results;
     } finally {
       syncState.running = false;
+      syncState.lastResults = results;
+      syncState.plan = null;
+      syncState.fetchedShopIds.clear();
       setProgress(false);
-      await runPreview();   // 写完重读，刷新差异
+      if (rb) rb.disabled = false;
+      renderPlan(syncState.plan);
     }
   }
